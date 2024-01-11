@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XEGPU_TYPES_TD_INCLUDED_
-#define _XEGPU_TYPES_TD_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPUTYPES_TD
+#define MLIR_DIALECT_XEGPU_IR_XEGPUTYPES_TD
 
 include "mlir/IR/BuiltinTypes.td"
 
@@ -168,4 +168,4 @@ def XeGPU_Nbarrier: XeGPUTypeDef<"Nbarrier", "nbarrier", [], "mlir::Type"> {
   }];
 }
 
-#endif // _XEGPU_TYPES_TD_INCLUDED_
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPUTYPES_TD

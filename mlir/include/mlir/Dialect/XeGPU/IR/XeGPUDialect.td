@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XEGPU_DIALECT_TD_INCLUDED_
-#define _XEGPU_DIALECT_TD_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPUDIALECT_TD
+#define MLIR_DIALECT_XEGPU_IR_XEGPUDIALECT_TD
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/OpAsmInterface.td"
@@ -51,4 +51,4 @@ def XeGPUDialect : Dialect {
     let useDefaultAttributePrinterParser = true;
 }
 
-#endif //XEGPU_DIALECT
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPUDIALECT_TD

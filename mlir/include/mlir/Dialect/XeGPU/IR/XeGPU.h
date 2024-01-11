@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XeGPU_OPS_H_INCLUDED_
-#define _XeGPU_OPS_H_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPU_H
+#define MLIR_DIALECT_XEGPU_IR_XEGPU_H
 
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Dialect.h>
@@ -49,4 +49,4 @@ class TensorDescType;
 #define GET_OP_CLASSES
 #include <mlir/Dialect/XeGPU/IR/XeGPU.h.inc>
 
-#endif // _XeGPU_OPS_H_INCLUDED_
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPU_H

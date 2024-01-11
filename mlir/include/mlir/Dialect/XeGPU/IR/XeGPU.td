@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XeGPU_TD_INCLUDED_
-#define _XeGPU_TD_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPU_TD
+#define MLIR_DIALECT_XEGPU_IR_XEGPU_TD
 
 include "mlir/Dialect/XeGPU/IR/XeGPUOps.td"
 
-#endif // _XeGPU_TD_INCLUDED_
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPU_TD

@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XeGPU_OPS_TD_INCLUDED_
-#define _XeGPU_OPS_TD_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
+#define MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
 
 include "mlir/Dialect/XeGPU/IR/XeGPUAttrs.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
@@ -584,4 +584,4 @@ def XeGPU_MfenceOp
       }];
   }
 
-#endif // _XeGPU_OPS_TD_INCLUDED_
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD

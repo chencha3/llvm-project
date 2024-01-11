@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef _XEGPU_ATTRS_TD_INCLUDED_
-#define _XEGPU_ATTRS_TD_INCLUDED_
+#ifndef MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD
+#define MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD
 
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
 
@@ -133,4 +133,4 @@ def XeGPU_AtomicRMWKindAttr : I64EnumAttr<
   let cppNamespace = "::mlir::xegpu";
 }
 
-#endif // _XEGPU_ATTRS_TD_INCLUDED_
+#endif // MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD
