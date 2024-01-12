@@ -222,7 +222,6 @@ def XeGPU_LoadNDOp : XeGPU_Op<"load_nd"> {
     xegpu::TensorDescType getTensorDescType() {
       return getTensorDesc().getType();
     }
-
   }];
 
   // Format: xegpu.load_nd %1 {transpose = [1, 0], l1_hint = cached, l2_hint = uncached, l3_hint=streaming}
@@ -380,7 +379,7 @@ def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
   let summary = "update the offsets for the given tensor descriptor";
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_OffsetType: $offsets,
-                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
+                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::VC">: $mode);
   let results = (outs XeGPU_TensorDesc: $result);
 
   let builders = [
@@ -453,7 +452,7 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
     XeGPU_TensorDesc:$tensorDesc,
     XeGPU_MaskType:$mask,
     Optional<XeGPU_ValueType>:$value,
-    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
+    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::VC">: $mode
   );
 
   let results = (outs XeGPU_ValueType:$result);

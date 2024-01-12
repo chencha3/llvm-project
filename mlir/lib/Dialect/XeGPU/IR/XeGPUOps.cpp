@@ -42,7 +42,7 @@ static void transpose(llvm::ArrayRef<int64_t> trans,
   std::vector<int64_t> old = shape;
   for (size_t i = 0; i < trans.size(); i++)
     shape[i] = old[trans[i]];
-};
+}
 
 template <typename T>
 static std::string makeString(T array, bool breakline = false) {
@@ -97,7 +97,7 @@ static ParseResult parseBoolAndIntegerAttr(OpAsmParser &parser,
   if (attr)
     result.addAttribute(attrKeyword, attr);
   return success();
-};
+}
 
 /// @brief Parsing optional attribute list which are enclosed in braces "{}",
 /// and seperated by comma
@@ -1644,26 +1644,28 @@ void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state,
 }
 
 LogicalResult UpdateOffsetOp::verify() {
-  auto srcTy = getTensorDesc().getType();
-  auto offTy = getOffsets().getType();
-  auto resTy = getResult().getType();
 
+  auto mode = getMode();
+  if (mode != ModeKind::VC) 
+    return emitOpError("UpdateOffsetOp only work on VC mode.\n");
+
+  auto srcTy = getTensorDesc().getType();
+  auto resTy = getResult().getType();
   if (srcTy != resTy)
     return emitOpError("The result should have the same type (shape and "
                        "encoding attribute) as the input TensorDesc.");
-
-  auto shape = srcTy.getShape();
 
   if (!srcTy.getScattered()) {
     return emitOpError("Invalid TensorDesc. UpdateOffsetOp only works on "
                        "TensorDescs with ScatteredAttr.");
   }
 
-  auto vecTy = llvm::dyn_cast<VectorType>(offTy);
-  if (!vecTy || vecTy.getRank() != 1)
+  auto offTy = llvm::dyn_cast<VectorType>(getOffsets().getType());
+  if (!offTy || offTy.getRank() != 1)
     return emitOpError("The offset should be an 1D vector.\n");
 
-  if (shape[0] != vecTy.getShape()[0])
+  auto shape = srcTy.getShape();
+  if (shape[0] != offTy.getShape()[0])
     return emitOpError(
         "The offset should have same length as the dim-0 of TensorDesc.");
 
@@ -1702,9 +1704,8 @@ void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
 
 LogicalResult AtomicRMWOp::verify() {
   auto mode = getMode();
-  if (mode != ModeKind::VC) {
+  if (mode != ModeKind::VC) 
     return emitOpError("AtomicRMWOp only work on VC mode.\n");
-  }
   return success();
 }
 
