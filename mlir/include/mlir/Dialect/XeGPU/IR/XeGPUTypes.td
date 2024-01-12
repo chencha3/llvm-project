@@ -31,7 +31,7 @@ def XeGPU_Vector2DType: VectorOfRankAndType<[2], [XeGPU_ScalarType]>;
 // common base class for types in XeGPU dialect
 class XeGPUTypeDef<string name, string typeMnemonic, list<Trait> traits = [],
                    string baseCppClass = "::mlir::Type">
-    : TypeDef<XeGPUDialect, name, traits, baseCppClass> {
+    : TypeDef<XeGPU_Dialect, name, traits, baseCppClass> {
   let mnemonic = typeMnemonic;
 }
 
@@ -108,13 +108,13 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
     )>,
     TypeBuilder<(ins
       "llvm::ArrayRef<int64_t>": $shape, "mlir::Type": $elementType,
-      "mlir::xegpu::MemoryScope": $memory_scope, "int": $array_length,
+      "mlir::xegpu::MemoryScopeKind": $memory_scope, "int": $array_length,
       "bool": $boundary_check, "mlir::xegpu::ScatteredAttr": $scattered,
       "mlir::xegpu::SubGroupMapAttr": $mapping
     )>,
     TypeBuilderWithInferredContext<(ins
       "llvm::ArrayRef<int64_t>": $shape, "mlir::Type": $elementType,
-      "mlir::xegpu::MemoryScope": $memory_scope, "int": $array_length,
+      "mlir::xegpu::MemoryScopeKind": $memory_scope, "int": $array_length,
       "bool": $boundary_check, "mlir::xegpu::ScatteredAttr": $scattered,
       "mlir::xegpu::SubGroupMapAttr": $mapping
     )>
@@ -147,7 +147,7 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
       return llvm::dyn_cast_if_present<ScatteredAttr>(getEncoding());
     }
 
-    xegpu::MemoryScope getMemoryScope();
+    xegpu::MemoryScopeKind getMemoryScope();
     int getArrayLength();
     bool getBoundaryCheck();
     xegpu::ScatteredAttr getScattered();

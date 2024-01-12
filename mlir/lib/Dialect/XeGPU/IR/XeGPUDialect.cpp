@@ -76,8 +76,7 @@ mlir::LogicalResult SubGroupMapAttr::verify(
 
 mlir::Attribute TensorDescAttr::parse(mlir::AsmParser &parser,
                                       mlir::Type type) {
-
-  mlir::FailureOr<xegpu::MemoryScope> memory_scope;
+  mlir::FailureOr<xegpu::MemoryScopeKind> memory_scope;
   mlir::FailureOr<int> array_length;
   mlir::FailureOr<bool> boundary_check;
   mlir::FailureOr<xegpu::ScatteredAttr> scattered;
@@ -105,7 +104,7 @@ mlir::Attribute TensorDescAttr::parse(mlir::AsmParser &parser,
         seen_memory_scope = true;
         // Parse variable 'memory_scope'
         memory_scope =
-            mlir::FieldParser<mlir::xegpu::MemoryScope>::parse(parser);
+            mlir::FieldParser<mlir::xegpu::MemoryScopeKind>::parse(parser);
         if (mlir::failed(memory_scope))
           return parser.emitError(
               parser.getCurrentLocation(),
@@ -157,7 +156,7 @@ mlir::Attribute TensorDescAttr::parse(mlir::AsmParser &parser,
   if (parser.parseGreater())
     return {};
   return TensorDescAttr::get(
-      parser.getContext(), memory_scope.value_or(xegpu::MemoryScope::GLOBAL),
+      parser.getContext(), memory_scope.value_or(xegpu::MemoryScopeKind::GLOBAL),
       array_length.value_or(1), boundary_check.value_or(true),
       scattered.value_or(xegpu::ScatteredAttr()),
       map.value_or(xegpu::SubGroupMapAttr()));
@@ -169,7 +168,7 @@ void TensorDescAttr::print(::mlir::AsmPrinter &printer) const {
 
   printer << "<";
 
-  if (printDefaults || getMemoryScope() != xegpu::MemoryScope::GLOBAL) {
+  if (printDefaults || getMemoryScope() != xegpu::MemoryScopeKind::GLOBAL) {
     if (printSep)
       printer << ", ";
     printSep = true;
@@ -208,7 +207,7 @@ void TensorDescAttr::print(::mlir::AsmPrinter &printer) const {
 
 bool TensorDescAttr::hasNonDefaultAttrs() {
   int count = 0;
-  if (getMemoryScope() != MemoryScope::GLOBAL)
+  if (getMemoryScope() != MemoryScopeKind::GLOBAL)
     count++;
   if (getBoundaryCheck() != true)
     count++;
@@ -222,7 +221,7 @@ bool TensorDescAttr::hasNonDefaultAttrs() {
 }
 
 TensorDescAttr TensorDescAttr::get(mlir::MLIRContext *context,
-                                   xegpu::MemoryScope memory_scope,
+                                   xegpu::MemoryScopeKind memory_scope,
                                    int array_length,
                                    xegpu::ScatteredAttr scattered,
                                    xegpu::SubGroupMapAttr map) {
@@ -287,11 +286,11 @@ void TensorDescType::print(::mlir::AsmPrinter &printer) const {
     auto encoding = getEncoding();
     if (auto attr = getEncodingAsMapAttr()) {
       encoding =
-          TensorDescAttr::get(getContext(), MemoryScope::GLOBAL, 1, {}, attr);
+          TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1, {}, attr);
     }
     if (auto attr = getEncodingAsScatteredAttr()) {
       encoding =
-          TensorDescAttr::get(getContext(), MemoryScope::GLOBAL, 1, attr, {});
+          TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1, attr, {});
     }
     printer << ", " << encoding;
   } else if (auto encoding = getEncodingAsTensorDescAttr()) {
@@ -312,7 +311,7 @@ TensorDescType TensorDescType::get(llvm::ArrayRef<int64_t> shape,
 TensorDescType TensorDescType::get(mlir::MLIRContext *context,
                                    llvm::ArrayRef<int64_t> shape,
                                    mlir::Type elementType,
-                                   mlir::xegpu::MemoryScope memory_scope,
+                                   mlir::xegpu::MemoryScopeKind memory_scope,
                                    int array_length, bool boundary_check,
                                    mlir::xegpu::ScatteredAttr scattered,
                                    mlir::xegpu::SubGroupMapAttr mapping) {
@@ -323,7 +322,7 @@ TensorDescType TensorDescType::get(mlir::MLIRContext *context,
 
 TensorDescType TensorDescType::get(llvm::ArrayRef<int64_t> shape,
                                    mlir::Type elementType,
-                                   mlir::xegpu::MemoryScope memory_scope,
+                                   mlir::xegpu::MemoryScopeKind memory_scope,
                                    int array_length, bool boundary_check,
                                    mlir::xegpu::ScatteredAttr scattered,
                                    mlir::xegpu::SubGroupMapAttr mapping) {
@@ -333,12 +332,12 @@ TensorDescType TensorDescType::get(llvm::ArrayRef<int64_t> shape,
   return Base::get(elementType.getContext(), shape, elementType, attr);
 }
 
-xegpu::MemoryScope TensorDescType::getMemoryScope() {
+xegpu::MemoryScopeKind TensorDescType::getMemoryScope() {
   auto attr = getEncodingAsTensorDescAttr();
   if (attr)
     return attr.getMemoryScope();
   // return default value
-  return MemoryScope::GLOBAL;
+  return MemoryScopeKind::GLOBAL;
 }
 
 int TensorDescType::getArrayLength() {

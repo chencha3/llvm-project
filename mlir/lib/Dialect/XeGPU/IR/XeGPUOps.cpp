@@ -125,15 +125,15 @@ parseOptionalAttrDict(OpAsmParser &parser, OperationState &result,
 
     if (nameId == "l1_hint" || nameId == "l2_hint" || nameId == "l3_hint") {
       if (isWrite)
-        return parseCustomEnumAttr<CacheWriteHint, CacheWriteHintAttr>(
+        return parseCustomEnumAttr<WriteCacheKind, WriteCacheKindAttr>(
             parser, result, nameId);
       else
-        return parseCustomEnumAttr<CacheReadHint, CacheReadHintAttr>(
+        return parseCustomEnumAttr<ReadCacheKind, ReadCacheKindAttr>(
             parser, result, nameId);
     }
 
     if (nameId == "mode") {
-      return parseCustomEnumAttr<Mode, ModeAttr>(parser, result, nameId);
+      return parseCustomEnumAttr<ModeKind, ModeKindAttr>(parser, result, nameId);
     }
 
     if (nameId == "chunk_size_per_lane" || nameId == "vnni_axis")
@@ -217,7 +217,7 @@ static bool verifyAndInferShape(std::vector<int64_t> &shape,
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type TensorDesc, Value source, ValueRange offsets,
                            ValueRange shape, ValueRange strides,
-                           llvm::ArrayRef<int64_t> static_offsets, Mode mode) {
+                           llvm::ArrayRef<int64_t> static_offsets, ModeKind mode) {
   auto offsetRank = static_offsets.size();
   auto shapeRank = shape.size() ? shape.size() : getRankOf(source);
 
@@ -243,13 +243,13 @@ void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
   state.addAttribute(getStaticOffsetsAttrName(state.name),
                      builder.getDenseI64ArrayAttr(static_offsets));
   state.addAttribute(getModeAttrName(state.name),
-                     xegpu::ModeAttr::get(builder.getContext(), mode));
+                     xegpu::ModeKindAttr::get(builder.getContext(), mode));
   state.addTypes(TensorDesc);
 }
 
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type tdesc, Value source,
-                           llvm::ArrayRef<OpFoldResult> offsets, Mode mode) {
+                           llvm::ArrayRef<OpFoldResult> offsets, ModeKind mode) {
   auto ty = llvm::dyn_cast_if_present<MemRefType>(source.getType());
   assert(ty && ty.hasStaticShape() && offsets.size() == getRankOf(source));
 
@@ -267,7 +267,7 @@ void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type tdesc, Value source,
                            llvm::ArrayRef<OpFoldResult> offsets,
                            ValueRange shape, ValueRange stride,
-                           xegpu::Mode mode) {
+                           ModeKind mode) {
   assert(shape.size() && offsets.size() && stride.size() &&
          shape.size() == stride.size() && shape.size() == offsets.size());
 
@@ -391,7 +391,7 @@ void CreateNdDescOp::print(OpAsmPrinter &printer) {
     printer << "]";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << ' ' << "{";
     printer << "mode = " << mode;
     printer << "}";
@@ -415,12 +415,12 @@ LogicalResult CreateNdDescOp::verify() {
                        "non-scattered operators.\n");
   }
 
-  if (mode == Mode::VC && mapping) {
+  if (mode == ModeKind::VC && mapping) {
     return emitOpError("Mapping attribute of TensorDesc is not expected "
                        "for VC mode operations.\n");
   }
 
-  if (mode == Mode::SIMT && !mapping) {
+  if (mode == ModeKind::SIMT && !mapping) {
     return emitOpError("Expecting SgMap attribute for SIMT mode operators.\n");
   }
 
@@ -606,11 +606,11 @@ void CreateDescOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getOffsets();
 
-  if (printDefaults || mode != Mode::SIMT || chunk != 1) {
+  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << mode;
     printSep = true;
   }
@@ -621,7 +621,7 @@ void CreateDescOp::print(OpAsmPrinter &printer) {
     printer << "chunk_size_per_lane = " << chunk;
   }
 
-  if (printDefaults || mode != Mode::SIMT || chunk != 1) {
+  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
     printer << "}";
   }
 
@@ -643,7 +643,7 @@ LogicalResult CreateDescOp::verify() {
   auto tdescTy = getTensorDesc().getType();
   auto chunkSize = getChunkSizePerLane();
 
-  if (mode == Mode::SIMT || mapping) {
+  if (mode == ModeKind::SIMT || mapping) {
     return emitOpError("CreateDescOp only support VC mode and mapping "
                        "attribute of TensorDesc is not expected.\n");
   }
@@ -685,7 +685,7 @@ void CreateDescOp::build(OpBuilder &builder, OperationState &state,
   state.getOrAddProperties<Properties>().chunk_size_per_lane =
       builder.getIntegerAttr(builder.getIntegerType(32), chunk_size_per_lane);
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(TensorDesc);
 }
 
@@ -698,7 +698,7 @@ void CreateDescOp::build(OpBuilder &builder, OperationState &state,
     state.getOrAddProperties<Properties>().chunk_size_per_lane =
         chunk_size_per_lane;
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(TensorDesc);
 }
 
@@ -748,11 +748,11 @@ void LoadNDOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << mode;
     printSep = true;
   }
@@ -774,7 +774,7 @@ void LoadNDOp::print(OpAsmPrinter &printer) {
 
   printCacheHintAttrs<LoadNDOp>(printer, *this, printSep);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -809,7 +809,7 @@ LogicalResult LoadNDOp::verify() {
   auto valueShape = valueTy.getShape().vec();
   auto array_len = tdescTy.getArrayLength();
 
-  if (mode == Mode::SIMT) {
+  if (mode == ModeKind::SIMT) {
     auto sgMap = tdescTy.getMapping();
     if (!sgMap) {
       return emitOpError(
@@ -925,18 +925,18 @@ void StoreNDOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << getMode();
     printSep = true;
   }
 
   printCacheHintAttrs<StoreNDOp>(printer, *this, true);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -969,7 +969,7 @@ LogicalResult StoreNDOp::verify() {
 
   auto mode = getMode();
 
-  if (mode == Mode::VC) { // for VC mode, no attr attached
+  if (mode == ModeKind::VC) { // for VC mode, no attr attached
     if (dstTy.getShape() != valTy.getShape())
       return emitOpError("In VC mode, the value (vector) shape doesn't match "
                          "the memory (dst) shape.\n");
@@ -1039,18 +1039,18 @@ void PrefetchNDOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << getMode();
     printSep = true;
   }
 
   printCacheHintAttrs<PrefetchNDOp>(printer, *this, true);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -1157,11 +1157,11 @@ void LoadGatherOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getMask();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << getMode();
     printSep = true;
   }
@@ -1183,7 +1183,7 @@ void LoadGatherOp::print(OpAsmPrinter &printer) {
 
   printCacheHintAttrs<LoadGatherOp>(printer, *this, printSep);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -1244,7 +1244,7 @@ LogicalResult LoadGatherOp::verify() {
 
   auto mode = getMode();
   auto mapping = tdescTy.getMapping();
-  if (mode == Mode::SIMT || mapping) {
+  if (mode == ModeKind::SIMT || mapping) {
     return emitOpError("LoadGatherOp only supports VC mode and mapping "
                        "attribute of TensorDesc is not expected.\n");
   }
@@ -1280,8 +1280,8 @@ LogicalResult LoadGatherOp::verify() {
 
 void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
                          Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, CacheReadHintAttr l1_hint,
-                         CacheReadHintAttr l2_hint, CacheReadHintAttr l3_hint) {
+                         DenseI64ArrayAttr transpose, ReadCacheKindAttr l1_hint,
+                         ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   if (vnni_axis)
@@ -1300,14 +1300,14 @@ void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
 
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(value);
 }
 
 void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
                          Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, CacheReadHint l1_hint,
-                         CacheReadHint l2_hint, CacheReadHint l3_hint) {
+                         DenseI64ArrayAttr transpose, ReadCacheKind l1_hint,
+                         ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   if (vnni_axis)
@@ -1317,13 +1317,13 @@ void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
     state.getOrAddProperties<Properties>().transpose = transpose;
 
   state.getOrAddProperties<Properties>().l1_hint =
-      CacheReadHintAttr::get(builder.getContext(), l1_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      CacheReadHintAttr::get(builder.getContext(), l2_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
   state.getOrAddProperties<Properties>().l3_hint =
-      CacheReadHintAttr::get(builder.getContext(), l3_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(value);
 }
 
@@ -1420,18 +1420,18 @@ void StoreScatterOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getMask();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << getMode();
     printSep = true;
   }
 
   printCacheHintAttrs<StoreScatterOp>(printer, *this, printSep);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -1453,7 +1453,7 @@ LogicalResult StoreScatterOp::verify() {
   auto mode = getMode();
   auto mapping = tdescTy.getMapping();
 
-  if (mode != Mode::VC || mapping)
+  if (mode != ModeKind::VC || mapping)
     return emitOpError("StoreScatterOp only supports VC mode and mapping "
                        "attribute of TensorDesc is not expected.\n");
 
@@ -1492,9 +1492,9 @@ LogicalResult StoreScatterOp::verify() {
 
 void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
                            Value value, Value TensorDesc, Value mask,
-                           CacheWriteHintAttr l1_hint,
-                           CacheWriteHintAttr l2_hint,
-                           CacheWriteHintAttr l3_hint) {
+                           WriteCacheKindAttr l1_hint,
+                           WriteCacheKindAttr l2_hint,
+                           WriteCacheKindAttr l3_hint) {
   state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
@@ -1508,26 +1508,26 @@ void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
   }
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
 
 void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
                            Value value, Value TensorDesc, Value mask,
-                           CacheWriteHint l1_hint, CacheWriteHint l2_hint,
-                           CacheWriteHint l3_hint) {
+                           WriteCacheKind l1_hint, WriteCacheKind l2_hint,
+                           WriteCacheKind l3_hint) {
   state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   state.getOrAddProperties<Properties>().l1_hint =
-      CacheWriteHintAttr::get(builder.getContext(), l1_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      CacheWriteHintAttr::get(builder.getContext(), l2_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l2_hint);
   ;
   state.getOrAddProperties<Properties>().l3_hint =
-      CacheWriteHintAttr::get(builder.getContext(), l3_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l3_hint);
   ;
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
 
 ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -1566,18 +1566,18 @@ void PrefetchOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << ' ' << "{";
   }
 
-  if (printDefaults || mode != Mode::SIMT) {
+  if (printDefaults || mode != ModeKind::SIMT) {
     printer << "mode = " << getMode();
     printSep = true;
   }
 
   printCacheHintAttrs<PrefetchOp>(printer, *this, printSep);
 
-  if (printDefaults || mode != Mode::SIMT || numAttrs > 1) {
+  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
     printer << "}";
   }
 
@@ -1595,7 +1595,7 @@ LogicalResult PrefetchOp::verify() {
     return emitOpError("Invalid TensorDesc. PrefetchOp only works on "
                        "TensorDescs with ScatteredAttr.");
 
-  if (mode != Mode::VC || mapping) {
+  if (mode != ModeKind::VC || mapping) {
     return emitOpError("PrefetchOp only supports VC mode. and mapping "
                        "attribute of TensorDesc is not expected.\n");
   }
@@ -1604,8 +1604,8 @@ LogicalResult PrefetchOp::verify() {
 }
 
 void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, CacheReadHintAttr l1_hint,
-                       CacheReadHintAttr l2_hint, CacheReadHintAttr l3_hint) {
+                       Value TensorDesc, ReadCacheKindAttr l1_hint,
+                       ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
   state.addOperands(TensorDesc);
   if (l1_hint)
     state.getOrAddProperties<Properties>().l1_hint = l1_hint;
@@ -1617,22 +1617,30 @@ void PrefetchOp::build(OpBuilder &builder, OperationState &state,
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
 
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
 
 void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, CacheReadHint l1_hint,
-                       CacheReadHint l2_hint, CacheReadHint l3_hint) {
+                       Value TensorDesc, ReadCacheKind l1_hint,
+                       ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
   state.addOperands(TensorDesc);
   state.getOrAddProperties<Properties>().l1_hint =
-      CacheReadHintAttr::get(builder.getContext(), l1_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      CacheReadHintAttr::get(builder.getContext(), l2_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
   state.getOrAddProperties<Properties>().l3_hint =
-      CacheReadHintAttr::get(builder.getContext(), l3_hint);
-  ;
+      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
+}
+
+void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state, 
+                           Type result, Value TensorDesc, Value offsets) {
+  state.addOperands(TensorDesc);
+  state.addOperands(offsets);
+  state.getOrAddProperties<Properties>().mode = 
+            xegpu::ModeKindAttr::get(builder.getContext(), xegpu::ModeKind::VC);
+  state.addTypes(result);  
 }
 
 LogicalResult UpdateOffsetOp::verify() {
@@ -1641,9 +1649,8 @@ LogicalResult UpdateOffsetOp::verify() {
   auto resTy = getResult().getType();
 
   if (srcTy != resTy)
-    return emitOpError(
-        "The result should have the same type"
-        "(shape and encoding attribute) as the input TensorDesc.");
+    return emitOpError("The result should have the same type (shape and "
+                       "encoding attribute) as the input TensorDesc.");
 
   auto shape = srcTy.getShape();
 
@@ -1673,7 +1680,7 @@ LogicalResult UpdateNDOffsetOp::verify() {
 
 void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
                          SymbolRefAttr callee, TypeRange results,
-                         ArgTypeAttr argType, ValueRange operands) {
+                         ArgTypeKindAttr argType, ValueRange operands) {
   state.addOperands(operands);
   state.addAttribute("argType", argType);
   state.addAttribute("callee", callee);
@@ -1682,41 +1689,39 @@ void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
 
 void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
                          StringAttr callee, TypeRange results,
-                         ArgTypeAttr argType, ValueRange operands) {
+                         ArgTypeKindAttr argType, ValueRange operands) {
   build(builder, state, SymbolRefAttr::get(callee), results, argType, operands);
 }
 
 void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
                          llvm::StringRef callee, TypeRange results,
-                         ArgTypeAttr argType, ValueRange operands) {
-  build(builder, state, StringAttr::get(builder.getContext(), callee), results,
-        argType, operands);
+                         ArgTypeKindAttr argType, ValueRange operands) {
+  build(builder, state, StringAttr::get(builder.getContext(), callee), 
+        results, argType, operands);
 }
 
 LogicalResult AtomicRMWOp::verify() {
   auto mode = getMode();
-  if (mode != Mode::VC) {
+  if (mode != ModeKind::VC) {
     return emitOpError("AtomicRMWOp only work on VC mode.\n");
   }
   return success();
 }
 
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
-                        AtomicRMWKindAttr kind, Value tensorDesc, Value mask,
-                        Value value) {
+                        AtomicRMWKindAttr kind, Value tensorDesc, Value mask, Value value) {
   state.addOperands(tensorDesc);
   state.addOperands(mask);
   if (value)
     state.addOperands(value);
   state.getOrAddProperties<Properties>().kind = kind;
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(result);
 }
 
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
-                        AtomicRMWKind kind, Value tensorDesc, Value mask,
-                        Value value) {
+                        AtomicRMWKind kind, Value tensorDesc, Value mask, Value value) {
   state.addOperands(tensorDesc);
   state.addOperands(mask);
   if (value)
@@ -1724,7 +1729,7 @@ void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
   state.getOrAddProperties<Properties>().kind =
       AtomicRMWKindAttr::get(builder.getContext(), kind);
   state.getOrAddProperties<Properties>().mode =
-      ModeAttr::get(builder.getContext(), Mode::VC);
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(result);
 }
 

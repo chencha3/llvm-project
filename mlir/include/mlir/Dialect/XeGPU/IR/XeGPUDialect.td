@@ -22,31 +22,23 @@ include "mlir/Interfaces/CopyOpInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ShapedOpInterfaces.td"
 
-
-// Provide a definition of the 'XeGPU' dialect in the ODS framework so that we
-// can define our operations.
-def XeGPUDialect : Dialect {
-    // The namespace of our dialect
+def XeGPU_Dialect : Dialect {
     let name = "xegpu";
-
-    // A short one-line summary of our dialect.
-    let summary = "The XeGPU dialect that models Intel GPU's ISA";
-
-    // A longer description of our dialect.
-    let description = [{
-            The XeGPU dialect models Intel Xe ISA semantics but works at vector and
-            TensorDesc data type. It provides 1:1 mappings to match Xe instructions like
-            DPAS and 2D block load. The matrix size being processed at this level
-            exactly matches the hardware instructions or the intrinsic supported by
-            the lower-level GPU compiler.
-        }];
-
-    // The C++ namespace that the dialect class definition resides in.
     let cppNamespace = "::mlir::xegpu";
+    let summary = "The XeGPU dialect that models Intel GPU's ISA";
+    let description = [{
+      The XeGPU dialect models Intel Xe ISA semantics but works at vector and
+      TensorDesc data type. It provides 1:1 mappings to match Xe instructions 
+      like DPAS and 2D block load. The matrix size being processed at this level
+      exactly matches the hardware instructions or the intrinsic supported by
+      the lower-level GPU compiler.
+    }];
 
-    let dependentDialects = ["::mlir::memref::MemRefDialect"];
+    let dependentDialects = [
+      "arith::ArithDialect",
+      "memref::MemRefDialect"
+    ];
 
-    // TODO: temporary disable it.
     let useDefaultTypePrinterParser = true;
     let useDefaultAttributePrinterParser = true;
 }
