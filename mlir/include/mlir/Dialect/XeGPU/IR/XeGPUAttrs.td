@@ -152,6 +152,6 @@ def XeGPU_AtomicRMWKind : I32EnumAttr<"AtomicRMWKind",
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::xegpu";
 }
-def XeGPU_AtomicRMWKindAttr : EnumAttr<XeGPU_Dialect, XeGPU_AtomicRMWKind>;
+def XeGPU_AtomicRMWKindAttr : EnumAttr<XeGPU_Dialect, XeGPU_AtomicRMWKind, "atomic_rmw_kind">;
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD

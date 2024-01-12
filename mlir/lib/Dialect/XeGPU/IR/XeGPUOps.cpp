@@ -27,6 +27,22 @@ namespace xegpu {
 
 extern bool printDefaultValues();
 
+template <typename T>
+static std::string makeString(T array, bool breakline = false) {
+  std::string buf;
+  buf.clear();
+  llvm::raw_string_ostream os(buf);
+  os << "[";
+  for (size_t i = 1; i < array.size(); i++) {
+    os << array[i - 1] << ", ";
+    if (breakline)
+      os << "\n\t\t";
+  }
+  os << array.back() << "]";
+  os.flush();
+  return buf;
+}
+
 static size_t getRankOf(Value value) {
   if (value.getType().isIntOrIndexOrFloat())
     return 0;
@@ -44,20 +60,29 @@ static void transpose(llvm::ArrayRef<int64_t> trans,
     shape[i] = old[trans[i]];
 }
 
-template <typename T>
-static std::string makeString(T array, bool breakline = false) {
-  std::string buf;
-  buf.clear();
-  llvm::raw_string_ostream os(buf);
-  os << "[";
-  for (size_t i = 1; i < array.size(); i++) {
-    os << array[i - 1] << ", ";
-    if (breakline)
-      os << "\n\t\t";
+static bool verifyAndInferShape(std::vector<int64_t> &shape,
+                                SubGroupMapAttr sgMap) {
+  if (sgMap) {
+    auto wiLayout = sgMap.getWiLayout();
+    auto wiData = sgMap.getWiData();
+
+    if ((int64_t)shape.size() != wiData.size() ||
+        (int64_t)shape.size() != wiLayout.size()) {
+      return false;
+    }
+
+    for (size_t i = 0; i < shape.size(); i++) {
+
+      if ((shape[i] % (wiLayout[i] * wiData[i]) != 0 &&
+           (wiLayout[i] * wiData[i]) % shape[i] != 0) ||
+          shape[i] % wiLayout[i] != 0 || shape[i] % wiData[i] != 0) {
+        return false;
+      }
+      shape[i] /= wiLayout[i];
+    }
   }
-  os << array.back() << "]";
-  os.flush();
-  return buf;
+
+  return true;
 }
 
 template <typename CustomEnum, typename CustomEnumAttr>
@@ -99,12 +124,6 @@ static ParseResult parseBoolAndIntegerAttr(OpAsmParser &parser,
   return success();
 }
 
-/// @brief Parsing optional attribute list which are enclosed in braces "{}",
-/// and seperated by comma
-/// @param parser
-/// @param result
-/// @param allowedKeywords
-/// @return
 static ParseResult
 parseOptionalAttrDict(OpAsmParser &parser, OperationState &result,
                       llvm::ArrayRef<llvm::StringRef> allowedKeywords,
@@ -177,43 +196,10 @@ static void printCacheHintAttrs(OpAsmPrinter &printer, T op, bool printSep) {
   }
 }
 
-static bool verifyAndInferShape(std::vector<int64_t> &shape,
-                                SubGroupMapAttr sgMap) {
-  if (sgMap) {
-    auto wiLayout = sgMap.getWiLayout();
-    auto wiData = sgMap.getWiData();
 
-    if ((int64_t)shape.size() != wiData.size() ||
-        (int64_t)shape.size() != wiLayout.size()) {
-      return false;
-    }
-
-    for (size_t i = 0; i < shape.size(); i++) {
-
-      if ((shape[i] % (wiLayout[i] * wiData[i]) != 0 &&
-           (wiLayout[i] * wiData[i]) % shape[i] != 0) ||
-          shape[i] % wiLayout[i] != 0 || shape[i] % wiData[i] != 0) {
-        return false;
-      }
-      shape[i] /= wiLayout[i];
-    }
-  }
-
-  return true;
-}
-
-/// @brief the base builder for CreateNdDescOp
-/// @param builder, the mlir OpBuilder
-/// @param state , the mlir OperationState
-/// @param TensorDesc, the TensorDescType of the result
-/// @param source, the base address of the data. It can be either 2D memref
-/// object or simple integer value (pointer)
-/// @param offsets, the dynamic offset given as Value
-/// @param shape, the dynamic shape given as array of Values
-/// @param strides, the dynamic shape given as array of Values
-/// @param static_offsets, the static offset. If it is not used it should be
-/// filled with ShapeType::kDynamic
-/// @param mode, VC or SIMT
+//===----------------------------------------------------------------------===//
+// XeGPU_CreateNdDescOp
+//===----------------------------------------------------------------------===//
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type TensorDesc, Value source, ValueRange offsets,
                            ValueRange shape, ValueRange strides,
@@ -541,166 +527,10 @@ llvm::ArrayRef<int64_t> CreateNdDescOp::getTensorDescShape() {
   return getTensorDescType().getShape();
 }
 
-ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand sourceRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> sourceOperands(
-      sourceRawOperands);
-  llvm::SMLoc sourceOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(sourceRawOperands[0]))
-    return failure();
 
-  if (parser.parseComma())
-    return failure();
-
-  OpAsmParser::UnresolvedOperand offsetsRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> offsetsOperands(
-      offsetsRawOperands);
-  llvm::SMLoc offsetsOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(offsetsRawOperands[0]))
-    return failure();
-
-  if (parseOptionalAttrDict(parser, result, {"chunk_size_per_lane", "mode"}))
-    return failure();
-
-  if (parser.parseColon())
-    return failure();
-
-  Type sourceRawTypes[1];
-  llvm::ArrayRef<Type> sourceTypes(sourceRawTypes);
-  if (parser.parseType(sourceRawTypes[0]))
-    return failure();
-  if (parser.parseComma())
-    return failure();
-
-  Type offsetsRawTypes[1];
-  llvm::ArrayRef<Type> offsetsTypes(offsetsRawTypes);
-  if (parser.parseType(offsetsRawTypes[0]))
-    return failure();
-  if (parser.parseArrow())
-    return failure();
-
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  if (parser.parseType(TensorDescRawTypes[0]))
-    return failure();
-
-  result.addTypes(TensorDescTypes);
-  if (parser.resolveOperands(sourceOperands, sourceTypes, sourceOperandsLoc,
-                             result.operands))
-    return failure();
-  if (parser.resolveOperands(offsetsOperands, offsetsTypes, offsetsOperandsLoc,
-                             result.operands))
-    return failure();
-  return success();
-}
-
-void CreateDescOp::print(OpAsmPrinter &printer) {
-  auto mode = getMode();
-  bool printSep = false;
-  auto chunk = getChunkSizePerLane();
-  auto printDefaults = printDefaultValues();
-
-  printer << ' ';
-  printer << getSource();
-  printer << ",";
-  printer << ' ';
-  printer << getOffsets();
-
-  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << mode;
-    printSep = true;
-  }
-
-  if (printDefaults || chunk != 1) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "chunk_size_per_lane = " << chunk;
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
-    printer << "}";
-  }
-
-  printer << ' ' << ":";
-  printer << ' ';
-  printer << getSource().getType();
-  printer << ",";
-  printer << ' ';
-  printer << getOffsets().getType();
-  printer << ' ' << "->";
-  printer << ' ';
-  printer << getTensorDesc().getType();
-}
-
-LogicalResult CreateDescOp::verify() {
-  auto mode = getMode();
-  auto mapping = getTensorDesc().getType().getMapping();
-  auto offsetTy = getOffsets().getType();
-  auto tdescTy = getTensorDesc().getType();
-  auto chunkSize = getChunkSizePerLane();
-
-  if (mode == ModeKind::SIMT || mapping) {
-    return emitOpError("CreateDescOp only support VC mode and mapping "
-                       "attribute of TensorDesc is not expected.\n");
-  }
-
-  if (getRankOf(getSource()) > 2)
-    return emitOpError(
-        "Expecting the source is a 1D/2D memref or pointer (uint64_t).");
-
-  if (!tdescTy.getScattered())
-    return emitOpError(
-        "Expecting the presence of ScatteredAttr for tensor descriptor.");
-
-  // Infer the TensorDesc shape
-  std::vector<int64_t> shape;
-  if (llvm::isa<VectorType>(offsetTy)) {
-    shape = llvm::dyn_cast<VectorType>(offsetTy).getShape().vec();
-    if (shape.size() != 1)
-      return emitOpError("Expecting the offset is a 1D vector.");
-  }
-
-  if (chunkSize != 1) {
-    shape.push_back(chunkSize);
-  }
-
-  auto tdescShape = tdescTy.getShape();
-  if (shape != tdescShape.vec()) {
-    return emitOpError("Expecting dimensions of offsets is the same as the "
-                       "tensor descriptor, or one less than.");
-  }
-
-  return success();
-}
-
-void CreateDescOp::build(OpBuilder &builder, OperationState &state,
-                         TensorDescType TensorDesc, Value source, Value offsets,
-                         uint32_t chunk_size_per_lane) {
-  state.addOperands(source);
-  state.addOperands(offsets);
-  state.getOrAddProperties<Properties>().chunk_size_per_lane =
-      builder.getIntegerAttr(builder.getIntegerType(32), chunk_size_per_lane);
-  state.getOrAddProperties<Properties>().mode =
-      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-  state.addTypes(TensorDesc);
-}
-
-void CreateDescOp::build(OpBuilder &builder, OperationState &state,
-                         TensorDescType TensorDesc, Value source, Value offsets,
-                         IntegerAttr chunk_size_per_lane) {
-  state.addOperands(source);
-  state.addOperands(offsets);
-  if (chunk_size_per_lane)
-    state.getOrAddProperties<Properties>().chunk_size_per_lane =
-        chunk_size_per_lane;
-  state.getOrAddProperties<Properties>().mode =
-      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-  state.addTypes(TensorDesc);
-}
+//===----------------------------------------------------------------------===//
+// XeGPU_LoadNDOp
+//===----------------------------------------------------------------------===//
 
 ParseResult LoadNDOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
@@ -864,6 +694,9 @@ LogicalResult LoadNDOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// XeGPU_StoreNDOp
+//===----------------------------------------------------------------------===//
 ParseResult StoreNDOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand valueRawOperands[1];
   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> valueOperands(
@@ -1004,6 +837,9 @@ LogicalResult StoreNDOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// XeGPU_PrefetchNDOp
+//===----------------------------------------------------------------------===//
 ParseResult PrefetchNDOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
@@ -1059,28 +895,278 @@ void PrefetchNDOp::print(OpAsmPrinter &printer) {
   printer << getTensorDesc().getType();
 }
 
-LogicalResult DpasOp::verify() {
+//===----------------------------------------------------------------------===//
+// XeGPU_UpdateNDOffsetOp
+//===----------------------------------------------------------------------===//
+LogicalResult UpdateNDOffsetOp::verify() {
+  // number of offsets specified must match the rank of the tensor descriptor
+  if (getTensorDesc().getType().getRank() != (int64_t)getOffsets().size()) {
+    return emitOpError("Invalid number of offsets.");
+  }
+  return success();
+}
 
-  int64_t lhsRank = getLhsType().getRank();
-  int64_t rhsRank = getRhsType().getRank();
-  Type lhsElemType = getLhsType().getElementType();
-  Type rhsElemType = getRhsType().getElementType();
+//===----------------------------------------------------------------------===//
+// XeGPU_CreateDescOp
+//===----------------------------------------------------------------------===//
 
-  if (lhsElemType != rhsElemType) {
-    return emitOpError("lhs and rhs element type does not match for dpas op");
+void CreateDescOp::build(OpBuilder &builder, OperationState &state,
+                         TensorDescType TensorDesc, Value source, Value offsets,
+                         uint32_t chunk_size_per_lane) {
+  state.addOperands(source);
+  state.addOperands(offsets);
+  state.getOrAddProperties<Properties>().chunk_size_per_lane =
+      builder.getIntegerAttr(builder.getIntegerType(32), chunk_size_per_lane);
+  state.getOrAddProperties<Properties>().mode =
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
+  state.addTypes(TensorDesc);
+}
+
+void CreateDescOp::build(OpBuilder &builder, OperationState &state,
+                         TensorDescType TensorDesc, Value source, Value offsets,
+                         IntegerAttr chunk_size_per_lane) {
+  state.addOperands(source);
+  state.addOperands(offsets);
+  if (chunk_size_per_lane)
+    state.getOrAddProperties<Properties>().chunk_size_per_lane =
+        chunk_size_per_lane;
+  state.getOrAddProperties<Properties>().mode =
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
+  state.addTypes(TensorDesc);
+}
+
+ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand rawOperands[2];
+  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> operands(rawOperands);
+  llvm::SMLoc operandsLoc = parser.getCurrentLocation();
+  // parse the source operand
+  if (parser.parseOperand(rawOperands[0]))
+    return failure();
+
+  if (parser.parseComma())
+    return failure();
+
+  // parse the offset operand
+  if (parser.parseOperand(rawOperands[1]))
+    return failure();
+
+  // parse the optional attributes 
+  if (parseOptionalAttrDict(parser, result, {"chunk_size_per_lane", "mode"}))
+    return failure();
+
+  if (parser.parseColon())
+    return failure();
+
+  Type rawTypes[2];
+  llvm::ArrayRef<Type> types(rawTypes);
+  if (parser.parseType(rawTypes[0]))
+    return failure();
+  if (parser.parseComma())
+    return failure();
+
+  if (parser.parseType(rawTypes[1]))
+    return failure();
+  if (parser.parseArrow())
+    return failure();
+
+  Type TensorDescRawTypes[1];
+  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
+  if (parser.parseType(TensorDescRawTypes[0]))
+    return failure();
+
+  result.addTypes(TensorDescTypes);
+  if (parser.resolveOperands(operands, types, operandsLoc,
+                             result.operands))
+    return failure();
+  return success();
+}
+
+// ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
+//   OpAsmParser::UnresolvedOperand sourceRawOperands[1];
+//   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> sourceOperands(
+//       sourceRawOperands);
+//   llvm::SMLoc sourceOperandsLoc = parser.getCurrentLocation();
+//   if (parser.parseOperand(sourceRawOperands[0]))
+//     return failure();
+
+//   if (parser.parseComma())
+//     return failure();
+
+//   OpAsmParser::UnresolvedOperand offsetsRawOperands[1];
+//   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> offsetsOperands(
+//       offsetsRawOperands);
+//   llvm::SMLoc offsetsOperandsLoc = parser.getCurrentLocation();
+//   if (parser.parseOperand(offsetsRawOperands[0]))
+//     return failure();
+
+//   if (parseOptionalAttrDict(parser, result, {"chunk_size_per_lane", "mode"}))
+//     return failure();
+
+//   if (parser.parseColon())
+//     return failure();
+
+//   Type sourceRawTypes[1];
+//   llvm::ArrayRef<Type> sourceTypes(sourceRawTypes);
+//   if (parser.parseType(sourceRawTypes[0]))
+//     return failure();
+//   if (parser.parseComma())
+//     return failure();
+
+//   Type offsetsRawTypes[1];
+//   llvm::ArrayRef<Type> offsetsTypes(offsetsRawTypes);
+//   if (parser.parseType(offsetsRawTypes[0]))
+//     return failure();
+//   if (parser.parseArrow())
+//     return failure();
+
+//   Type TensorDescRawTypes[1];
+//   llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
+//   if (parser.parseType(TensorDescRawTypes[0]))
+//     return failure();
+
+//   result.addTypes(TensorDescTypes);
+//   if (parser.resolveOperands(sourceOperands, sourceTypes, sourceOperandsLoc,
+//                              result.operands))
+//     return failure();
+//   if (parser.resolveOperands(offsetsOperands, offsetsTypes, offsetsOperandsLoc,
+//                              result.operands))
+//     return failure();
+//   return success();
+// }
+
+void CreateDescOp::print(OpAsmPrinter &printer) {
+  auto mode = getMode();
+  bool printSep = false;
+  auto chunk = getChunkSizePerLane();
+  auto printDefaults = printDefaultValues();
+
+  printer << ' ';
+  printer << getSource();
+  printer << ",";
+  printer << ' ';
+  printer << getOffsets();
+
+  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
+    printer << ' ' << "{";
   }
 
-  if (getAcc() && getAccType() != getResultType()) {
-    return emitOpError("Accumulator and Result for dpas op should have the "
-                       "same type (both shape and element type).");
+  if (printDefaults || mode != ModeKind::SIMT) {
+    printer << "mode = " << mode;
+    printSep = true;
   }
 
-  if (lhsRank != rhsRank || lhsRank != 3) {
+  if (printDefaults || chunk != 1) {
+    if (printSep)
+      printer << "," << ' ';
+    printer << "chunk_size_per_lane = " << chunk;
+  }
+
+  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
+    printer << "}";
+  }
+
+  printer << ' ' << ":";
+  printer << ' ';
+  printer << getSource().getType();
+  printer << ",";
+  printer << ' ';
+  printer << getOffsets().getType();
+  printer << ' ' << "->";
+  printer << ' ';
+  printer << getTensorDesc().getType();
+}
+
+LogicalResult CreateDescOp::verify() {
+  auto mode = getMode();
+  auto mapping = getTensorDesc().getType().getMapping();
+  auto offsetTy = getOffsets().getType();
+  auto tdescTy = getTensorDesc().getType();
+  auto chunkSize = getChunkSizePerLane();
+
+  if (mode == ModeKind::SIMT || mapping) {
+    return emitOpError("CreateDescOp only support VC mode and mapping "
+                       "attribute of TensorDesc is not expected.\n");
+  }
+
+  if (getRankOf(getSource()) > 2)
     return emitOpError(
-        "lhs and rhs rank does not match for dpas op, or their rank is not 3.");
+        "Expecting the source is a 1D/2D memref or pointer (uint64_t).");
+
+  if (!tdescTy.getScattered())
+    return emitOpError(
+        "Expecting the presence of ScatteredAttr for tensor descriptor.");
+
+  // Infer the TensorDesc shape
+  std::vector<int64_t> shape;
+  if (llvm::isa<VectorType>(offsetTy)) {
+    shape = llvm::dyn_cast<VectorType>(offsetTy).getShape().vec();
+    if (shape.size() != 1)
+      return emitOpError("Expecting the offset is a 1D vector.");
+  }
+
+  if (chunkSize != 1) {
+    shape.push_back(chunkSize);
+  }
+
+  auto tdescShape = tdescTy.getShape();
+  if (shape != tdescShape.vec()) {
+    return emitOpError("Expecting dimensions of offsets is the same as the "
+                       "tensor descriptor, or one less than.");
   }
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// XeGPU_LoadGatherOp
+//===----------------------------------------------------------------------===//
+void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
+                         Value TensorDesc, Value mask, IntegerAttr vnni_axis,
+                         DenseI64ArrayAttr transpose, ReadCacheKindAttr l1_hint,
+                         ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
+  state.addOperands(TensorDesc);
+  state.addOperands(mask);
+  if (vnni_axis)
+    state.getOrAddProperties<Properties>().vnni_axis = vnni_axis;
+
+  if (transpose)
+    state.getOrAddProperties<Properties>().transpose = transpose;
+
+  if (l1_hint)
+    state.getOrAddProperties<Properties>().l1_hint = l1_hint;
+
+  if (l2_hint)
+    state.getOrAddProperties<Properties>().l2_hint = l2_hint;
+
+  if (l3_hint)
+    state.getOrAddProperties<Properties>().l3_hint = l3_hint;
+
+  state.getOrAddProperties<Properties>().mode =
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
+  state.addTypes(value);
+}
+
+void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
+                         Value TensorDesc, Value mask, IntegerAttr vnni_axis,
+                         DenseI64ArrayAttr transpose, ReadCacheKind l1_hint,
+                         ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
+  state.addOperands(TensorDesc);
+  state.addOperands(mask);
+  if (vnni_axis)
+    state.getOrAddProperties<Properties>().vnni_axis = vnni_axis;
+
+  if (transpose)
+    state.getOrAddProperties<Properties>().transpose = transpose;
+
+  state.getOrAddProperties<Properties>().l1_hint =
+      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
+  state.getOrAddProperties<Properties>().l2_hint =
+      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
+  state.getOrAddProperties<Properties>().l3_hint =
+      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
+  state.getOrAddProperties<Properties>().mode =
+      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
+  state.addTypes(value);
 }
 
 ParseResult LoadGatherOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -1278,53 +1364,48 @@ LogicalResult LoadGatherOp::verify() {
   return success();
 }
 
-void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
-                         Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, ReadCacheKindAttr l1_hint,
-                         ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
+
+//===----------------------------------------------------------------------===//
+// XeGPU_StoreScatterOp
+//===----------------------------------------------------------------------===//
+void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
+                           Value value, Value TensorDesc, Value mask,
+                           WriteCacheKindAttr l1_hint,
+                           WriteCacheKindAttr l2_hint,
+                           WriteCacheKindAttr l3_hint) {
+  state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
-  if (vnni_axis)
-    state.getOrAddProperties<Properties>().vnni_axis = vnni_axis;
-
-  if (transpose)
-    state.getOrAddProperties<Properties>().transpose = transpose;
-
-  if (l1_hint)
+  if (l1_hint) {
     state.getOrAddProperties<Properties>().l1_hint = l1_hint;
-
-  if (l2_hint)
+  }
+  if (l2_hint) {
     state.getOrAddProperties<Properties>().l2_hint = l2_hint;
-
-  if (l3_hint)
+  }
+  if (l3_hint) {
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
-
+  }
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-  state.addTypes(value);
 }
 
-void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
-                         Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, ReadCacheKind l1_hint,
-                         ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
+void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
+                           Value value, Value TensorDesc, Value mask,
+                           WriteCacheKind l1_hint, WriteCacheKind l2_hint,
+                           WriteCacheKind l3_hint) {
+  state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
-  if (vnni_axis)
-    state.getOrAddProperties<Properties>().vnni_axis = vnni_axis;
-
-  if (transpose)
-    state.getOrAddProperties<Properties>().transpose = transpose;
-
   state.getOrAddProperties<Properties>().l1_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l2_hint);
+  ;
   state.getOrAddProperties<Properties>().l3_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
+      WriteCacheKindAttr::get(builder.getContext(), l3_hint);
+  ;
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-  state.addTypes(value);
 }
 
 ParseResult StoreScatterOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -1490,42 +1571,36 @@ LogicalResult StoreScatterOp::verify() {
   return success();
 }
 
-void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
-                           Value value, Value TensorDesc, Value mask,
-                           WriteCacheKindAttr l1_hint,
-                           WriteCacheKindAttr l2_hint,
-                           WriteCacheKindAttr l3_hint) {
-  state.addOperands(value);
+//===----------------------------------------------------------------------===//
+// XeGPU_PrefetchOp
+//===----------------------------------------------------------------------===//
+void PrefetchOp::build(OpBuilder &builder, OperationState &state,
+                       Value TensorDesc, ReadCacheKindAttr l1_hint,
+                       ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
   state.addOperands(TensorDesc);
-  state.addOperands(mask);
-  if (l1_hint) {
+  if (l1_hint)
     state.getOrAddProperties<Properties>().l1_hint = l1_hint;
-  }
-  if (l2_hint) {
+
+  if (l2_hint)
     state.getOrAddProperties<Properties>().l2_hint = l2_hint;
-  }
-  if (l3_hint) {
+
+  if (l3_hint)
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
-  }
+
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
 
-void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
-                           Value value, Value TensorDesc, Value mask,
-                           WriteCacheKind l1_hint, WriteCacheKind l2_hint,
-                           WriteCacheKind l3_hint) {
-  state.addOperands(value);
+void PrefetchOp::build(OpBuilder &builder, OperationState &state,
+                       Value TensorDesc, ReadCacheKind l1_hint,
+                       ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
   state.addOperands(TensorDesc);
-  state.addOperands(mask);
   state.getOrAddProperties<Properties>().l1_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l1_hint);
+      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l2_hint);
-  ;
+      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
   state.getOrAddProperties<Properties>().l3_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l3_hint);
-  ;
+      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
@@ -1603,37 +1678,9 @@ LogicalResult PrefetchOp::verify() {
   return success();
 }
 
-void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, ReadCacheKindAttr l1_hint,
-                       ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
-  state.addOperands(TensorDesc);
-  if (l1_hint)
-    state.getOrAddProperties<Properties>().l1_hint = l1_hint;
-
-  if (l2_hint)
-    state.getOrAddProperties<Properties>().l2_hint = l2_hint;
-
-  if (l3_hint)
-    state.getOrAddProperties<Properties>().l3_hint = l3_hint;
-
-  state.getOrAddProperties<Properties>().mode =
-      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-}
-
-void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, ReadCacheKind l1_hint,
-                       ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
-  state.addOperands(TensorDesc);
-  state.getOrAddProperties<Properties>().l1_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
-  state.getOrAddProperties<Properties>().l2_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
-  state.getOrAddProperties<Properties>().l3_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
-  state.getOrAddProperties<Properties>().mode =
-      ModeKindAttr::get(builder.getContext(), ModeKind::VC);
-}
-
+//===----------------------------------------------------------------------===//
+// XeGPU_UpdateOffsetOp
+//===----------------------------------------------------------------------===//
 void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state, 
                            Type result, Value TensorDesc, Value offsets) {
   state.addOperands(TensorDesc);
@@ -1644,7 +1691,6 @@ void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state,
 }
 
 LogicalResult UpdateOffsetOp::verify() {
-
   auto mode = getMode();
   if (mode != ModeKind::VC) 
     return emitOpError("UpdateOffsetOp only work on VC mode.\n");
@@ -1672,14 +1718,35 @@ LogicalResult UpdateOffsetOp::verify() {
   return success();
 }
 
-LogicalResult UpdateNDOffsetOp::verify() {
-  // number of offsets specified must match the rank of the tensor descriptor
-  if (getTensorDesc().getType().getRank() != (int64_t)getOffsets().size()) {
-    return emitOpError("Invalid number of offsets.");
+//===----------------------------------------------------------------------===//
+// XeGPU_DpasOp
+//===----------------------------------------------------------------------===//
+LogicalResult DpasOp::verify() {
+  int64_t lhsRank = getLhsType().getRank();
+  int64_t rhsRank = getRhsType().getRank();
+  Type lhsElemType = getLhsType().getElementType();
+  Type rhsElemType = getRhsType().getElementType();
+
+  if (lhsElemType != rhsElemType) {
+    return emitOpError("lhs and rhs element type does not match for dpas op");
   }
+
+  if (getAcc() && getAccType() != getResultType()) {
+    return emitOpError("Accumulator and Result for dpas op should have the "
+                       "same type (both shape and element type).");
+  }
+
+  if (lhsRank != rhsRank || lhsRank != 3) {
+    return emitOpError(
+        "lhs and rhs rank does not match for dpas op, or their rank is not 3.");
+  }
+
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// XeGPU_InvokeSIMDOp
+//===----------------------------------------------------------------------===//
 void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
                          SymbolRefAttr callee, TypeRange results,
                          ArgTypeKindAttr argType, ValueRange operands) {
@@ -1702,13 +1769,9 @@ void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
         results, argType, operands);
 }
 
-LogicalResult AtomicRMWOp::verify() {
-  auto mode = getMode();
-  if (mode != ModeKind::VC) 
-    return emitOpError("AtomicRMWOp only work on VC mode.\n");
-  return success();
-}
-
+//===----------------------------------------------------------------------===//
+// XeGPU_AtomicRMWOp
+//===----------------------------------------------------------------------===//
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
                         AtomicRMWKindAttr kind, Value tensorDesc, Value mask, Value value) {
   state.addOperands(tensorDesc);
@@ -1734,6 +1797,12 @@ void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
   state.addTypes(result);
 }
 
+LogicalResult AtomicRMWOp::verify() {
+  auto mode = getMode();
+  if (mode != ModeKind::VC) 
+    return emitOpError("AtomicRMWOp only work on VC mode.\n");
+  return success();
+}
 } // namespace xegpu
 } // namespace mlir
 

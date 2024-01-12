@@ -144,55 +144,6 @@ def XeGPU_CreateNdDescOp: XeGPU_Op<"create_nd_tdesc", [Pure, AttrSizedOperandSeg
 
 }
 
-def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
-  let summary = "create scattered tensor descritors (TensorDesc).";
-  let description = [{
-    "create_tdesc" is similar to "create_nd_tdesc" in terms that it creates 
-    a Tensor Descriptor (TensorDescType) for a memory region. While "create_nd_tdesc" 
-    is for creating continious subviews, "create_tdesc" is for creating non-continious
-    (scattered) subviews. It is designed only works with VectorCompute (VC) mode and 
-    accepts the following parameters:
-
-    * source: a 1D memref or pointer (uint64_t) represents the memory object.
-    * offsets: It is a 1D vector containing offsets of each access point, the supportted 
-          group size, e.g., vector<16xindex>. And each element in the vector corresponds 
-          to a work item (SIMT lane) in the subgroup.
-    * chunk_size_per_lane: [optional attribute] indicates number of continious elements 
-          accessed for each offset, default is 1.
-
-    Example 1. It assumes subgroup size is 4, and accesses a[0], a[16], a[32], a[64]
-    %a = memref.alloc() : memref<1024xf32>
-    %c0 = arith.constant dense<0, 16, 32, 64> : vector<4xindex>
-    %1 = xegpu.create_tdesc %a, %c0: memref<1024xf32> -> TensorDesc<4xf32>
-
-    Example 2. It assumes subgroup size is 4, and each workitem access 8 elements.
-               It will access totally 32 data elements: a[0:7], a[16:23], a[32:39], a[64:71]
-    %0 = memref.alloc() : memref<1024xf32>
-    %c0 = arith.constant dense<0, 16, 32, 64> : vector<4xindex>
-    %1 = xegpu.create_tdesc %0, %c0 {chunk_size_per_lane = 8}: memref<1024xf32> -> TensorDesc<4x8xf32>
-  }];
-
-  let arguments = (ins XeGPU_BaseAddrType: $source,
-                       XeGPU_OffsetType: $offsets,
-                       DefaultValuedAttr<I32Attr, "1">: $chunk_size_per_lane,
-                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
-  let results = (outs XeGPU_TensorDesc:$TensorDesc);
-
-  let builders = [
-    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
-                  "Value": $offsets, CArg<"uint32_t", "1"> : $chunk_size_per_lane)>,
-    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
-                  "Value": $offsets, "IntegerAttr": $chunk_size_per_lane)>
-  ];
-  let skipDefaultBuilders = 1;
-
-  // Format: xegpu.create_tdesc %src, %offsets {mode=simt, chunk_size_per_lane=1}
-  //              : ui64, vector<16 x index> -> !xegpu.tensor_desc<16xf32, #xegpu.scattered>
-  let hasCustomAssemblyFormat = 1;
-  let hasVerifier = 1;
-}
-
-
 def XeGPU_LoadNDOp : XeGPU_Op<"load_nd"> {
   let summary = "loads a n-D block from memory (represented by TensorDesc)" 
                 "to registers (represented by vector)";
@@ -276,36 +227,51 @@ def XeGPU_UpdateNDOffsetOp : XeGPU_Op<"update_nd_offset", []> {
   let hasVerifier = 1;
 }
 
-def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
-  let summary = "performs dpas computation";
-  let arguments = (ins
-    XeGPU_DpasOpType : $lhs,
-    XeGPU_DpasOpType : $rhs,
-    Optional<XeGPU_Vector2DType>: $acc,
-    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
-  );
-  let results = (outs XeGPU_Vector2DType: $result);
-  let assemblyFormat = [{
-     $lhs `,` $rhs (`,` $acc^)? (` ``{` `mode` `=` $mode^ `}`)? attr-dict `:`
-     qualified(type($lhs)) `,` qualified(type($rhs)) (`,` qualified(type($acc))^)? `->` qualified(type($result))
+def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
+  let summary = "create scattered tensor descritors (TensorDesc).";
+  let description = [{
+    "create_tdesc" is similar to "create_nd_tdesc" in terms that it creates 
+    a Tensor Descriptor (TensorDescType) for a memory region. While "create_nd_tdesc" 
+    is for creating continious subviews, "create_tdesc" is for creating non-continious
+    (scattered) subviews. It is designed only works with VectorCompute (VC) mode and 
+    accepts the following parameters:
+
+    * source: a 1D memref or pointer (uint64_t) represents the memory object.
+    * offsets: It is a 1D vector containing offsets of each access point, the supportted 
+          group size, e.g., vector<16xindex>. And each element in the vector corresponds 
+          to a work item (SIMT lane) in the subgroup.
+    * chunk_size_per_lane: [optional attribute] indicates number of continious elements 
+          accessed for each offset, default is 1.
+
+    Example 1. It assumes subgroup size is 4, and accesses a[0], a[16], a[32], a[64]
+    %a = memref.alloc() : memref<1024xf32>
+    %c0 = arith.constant dense<0, 16, 32, 64> : vector<4xindex>
+    %1 = xegpu.create_tdesc %a, %c0: memref<1024xf32> -> TensorDesc<4xf32>
+
+    Example 2. It assumes subgroup size is 4, and each workitem access 8 elements.
+               It will access totally 32 data elements: a[0:7], a[16:23], a[32:39], a[64:71]
+    %0 = memref.alloc() : memref<1024xf32>
+    %c0 = arith.constant dense<0, 16, 32, 64> : vector<4xindex>
+    %1 = xegpu.create_tdesc %0, %c0 {chunk_size_per_lane = 8}: memref<1024xf32> -> TensorDesc<4x8xf32>
   }];
 
-  let extraClassDeclaration = [{
-    VectorType getLhsType() {
-      return ::llvm::cast<VectorType>(getLhs().getType());
-    }
+  let arguments = (ins XeGPU_BaseAddrType: $source,
+                       XeGPU_OffsetType: $offsets,
+                       DefaultValuedAttr<I32Attr, "1">: $chunk_size_per_lane,
+                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
+  let results = (outs XeGPU_TensorDesc:$TensorDesc);
 
-    VectorType getRhsType() {
-      return ::llvm::cast<VectorType>(getRhs().getType());
-    }
+  let builders = [
+    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
+                  "Value": $offsets, CArg<"uint32_t", "1"> : $chunk_size_per_lane)>,
+    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
+                  "Value": $offsets, "IntegerAttr": $chunk_size_per_lane)>
+  ];
+  let skipDefaultBuilders = 1;
 
-    VectorType getAccType() {
-      return ::llvm::cast<VectorType>(getAcc().getType());
-    }
-
-    VectorType getResultType() { return getResult().getType(); }
-  }];
-
+  // Format: xegpu.create_tdesc %src, %offsets {mode=simt, chunk_size_per_lane=1}
+  //              : ui64, vector<16 x index> -> !xegpu.tensor_desc<16xf32, #xegpu.scattered>
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 
@@ -372,6 +338,39 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
   // Format: %3 = xegpu.load %1, %0 {l1_hint = cached, l2_hint = uncached}
   //                      : !xegpu.tensor_desc<16xf32, #xegpu.scattered>, vector<16xi1> -> vector<16xf32>
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
+  let summary = "performs dpas computation";
+  let arguments = (ins
+    XeGPU_DpasOpType : $lhs,
+    XeGPU_DpasOpType : $rhs,
+    Optional<XeGPU_Vector2DType>: $acc,
+    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
+  );
+  let results = (outs XeGPU_Vector2DType: $result);
+  let assemblyFormat = [{
+     $lhs `,` $rhs (`,` $acc^)? (` ``{` `mode` `=` $mode^ `}`)? attr-dict `:`
+     qualified(type($lhs)) `,` qualified(type($rhs)) (`,` qualified(type($acc))^)? `->` qualified(type($result))
+  }];
+
+  let extraClassDeclaration = [{
+    VectorType getLhsType() {
+      return ::llvm::cast<VectorType>(getLhs().getType());
+    }
+
+    VectorType getRhsType() {
+      return ::llvm::cast<VectorType>(getRhs().getType());
+    }
+
+    VectorType getAccType() {
+      return ::llvm::cast<VectorType>(getAcc().getType());
+    }
+
+    VectorType getResultType() { return getResult().getType(); }
+  }];
+
   let hasVerifier = 1;
 }
 
