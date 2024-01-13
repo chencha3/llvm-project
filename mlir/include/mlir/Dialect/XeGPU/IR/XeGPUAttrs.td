@@ -98,24 +98,18 @@ def XeGPU_MemoryScopeKind: I32EnumAttr<"MemoryScopeKind",
   let cppNamespace = "::mlir::xegpu";
 }
 
-def CACHE_KIND_CACHED:        I32EnumAttrCase<"CACHED", 0, "cached">;
-def CACHE_KIND_UNCACHED:      I32EnumAttrCase<"UNCACHED", 1, "uncached">;
-def CACHE_KIND_STREAMING:     I32EnumAttrCase<"STREAMING", 2, "streaming">;
-def CACHE_KIND_INVALIDATE:    I32EnumAttrCase<"READ_INVALIDATE", 3, "read_invalidate">;
-def CACHE_KIND_WRITE_BACK:    I32EnumAttrCase<"WRITE_BACK", 4, "write_back">;
-def CACHE_KIND_WRITE_THROUGH: I32EnumAttrCase<"WRITE_THROUGH", 5, "write_through">;
+def CACHE_KIND_CACHED:        I32EnumAttrCase<"CACHED", 0, "cached">;                    // valid for read and write
+def CACHE_KIND_UNCACHED:      I32EnumAttrCase<"UNCACHED", 1, "uncached">;                // valid for read and write
+def CACHE_KIND_STREAMING:     I32EnumAttrCase<"STREAMING", 2, "streaming">;              // valid for read only
+def CACHE_KIND_INVALIDATE:    I32EnumAttrCase<"READ_INVALIDATE", 3, "read_invalidate">;  // valid for read only
+def CACHE_KIND_WRITE_BACK:    I32EnumAttrCase<"WRITE_BACK", 4, "write_back">;            // valid for write only
+def CACHE_KIND_WRITE_THROUGH: I32EnumAttrCase<"WRITE_THROUGH", 5, "write_through">;      // valid for write only
 
-def XeGPU_ReadCacheKind : I32EnumAttr<"ReadCacheKind", 
-                            "Cache behavior for read", 
+
+
+def XeGPU_CacheKind : I32EnumAttr<"CacheKind", "Cache kind", 
   [CACHE_KIND_CACHED, CACHE_KIND_UNCACHED, 
-   CACHE_KIND_STREAMING, CACHE_KIND_INVALIDATE]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::xegpu";
-}
-
-def XeGPU_WriteCacheKind: I32EnumAttr<"WriteCacheKind", 
-                            "Cache behavior for write", 
-  [CACHE_KIND_UNCACHED, CACHE_KIND_STREAMING,
+   CACHE_KIND_STREAMING, CACHE_KIND_INVALIDATE,
    CACHE_KIND_WRITE_BACK, CACHE_KIND_WRITE_THROUGH]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::xegpu";
@@ -124,8 +118,7 @@ def XeGPU_WriteCacheKind: I32EnumAttr<"WriteCacheKind",
 def XeGPU_ArgTypeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ArgTypeKind, "arg_type_kind">;
 def XeGPU_ModeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ModeKind, "mode_kind">;
 def XeGPU_MemoryScopeAttr : EnumAttr<XeGPU_Dialect, XeGPU_MemoryScopeKind, "memory_scope_kind">;
-def XeGPU_ReadCacheAttr : EnumAttr<XeGPU_Dialect, XeGPU_ReadCacheKind, "read_cache_kind">;
-def XeGPU_WriteCacheAttr : EnumAttr<XeGPU_Dialect, XeGPU_WriteCacheKind, "write_cache_kind">;
+def XeGPU_CacheAttr : EnumAttr<XeGPU_Dialect, XeGPU_CacheKind, "cache_kind">;
 
 // RMW kind attribute
 def ATOMIC_RMW_KIND_ADDF    : I32EnumAttrCase<"addf", 0>;

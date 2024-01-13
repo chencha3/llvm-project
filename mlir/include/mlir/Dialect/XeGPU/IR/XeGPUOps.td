@@ -157,11 +157,11 @@ def XeGPU_LoadNDOp : XeGPU_Op<"load_nd"> {
   }];
 
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
-                       OptionalAttr<I32Attr>: $vnni_axis,
+                       OptionalAttr<I64Attr>: $vnni_axis,
                        OptionalAttr<DenseI64ArrayAttr>: $transpose,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l1_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l2_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l3_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
   let results = (outs XeGPU_ValueType: $value);
 
@@ -185,9 +185,9 @@ def XeGPU_StoreNDOp : XeGPU_Op<"store_nd", []> {
   let summary = "stores a n-D block register region back to memory, currently only supports 2D";
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_ValueType: $value,
-                       OptionalAttr<XeGPU_WriteCacheAttr>: $l1_hint,
-                       OptionalAttr<XeGPU_WriteCacheAttr>: $l2_hint,
-                       OptionalAttr<XeGPU_WriteCacheAttr>: $l3_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
 
   // Format: xegpu.store_nd %3, %2 {l1_hint = write_back, l2_hint = uncached}
@@ -199,9 +199,9 @@ def XeGPU_StoreNDOp : XeGPU_Op<"store_nd", []> {
 def XeGPU_PrefetchNDOp : XeGPU_Op<"prefetch_nd", []> {
   let summary = "prefetches a nD block to cache";
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l1_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l2_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l3_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
 
   // Format: xegpu.prefetch_nd %tdesc {l1_hint = cached, l2_hint = uncached}:
@@ -257,7 +257,7 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
 
   let arguments = (ins XeGPU_BaseAddrType: $source,
                        XeGPU_OffsetType: $offsets,
-                       DefaultValuedAttr<I32Attr, "1">: $chunk_size_per_lane,
+                       DefaultValuedAttr<I64Attr, "1">: $chunk_size_per_lane,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
   let results = (outs XeGPU_TensorDesc:$TensorDesc);
 
@@ -280,26 +280,26 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
 
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_MaskType: $mask,
-                       OptionalAttr<I32Attr>: $vnni_axis,
-                       OptionalAttr<XeGPU_IntArrayAttr2>: $transpose,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l1_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l2_hint,
-                       OptionalAttr<XeGPU_ReadCacheAttr>: $l3_hint,
+                       OptionalAttr<I64Attr>: $vnni_axis,
+                       OptionalAttr<DenseI64ArrayAttr>: $transpose,
+                       OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
   let results = (outs XeGPU_ValueType: $value);
 
   let builders = [
     OpBuilder<(ins "mlir::Type": $value, "mlir::Value": $TensorDesc, "mlir::Value": $mask, "mlir::IntegerAttr": $vnni_axis,
                     CArg<"mlir::DenseI64ArrayAttr", "mlir::DenseI64ArrayAttr()">: $transpose,
-                    CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l1_hint,
-                    CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l2_hint,
-                    CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l3_hint)>,
+                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l1_hint,
+                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l2_hint,
+                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l3_hint)>,
 
     OpBuilder<(ins "Type": $value, "Value": $TensorDesc, "Value": $mask, "IntegerAttr": $vnni_axis,
                     CArg<"DenseI64ArrayAttr", "DenseI64ArrayAttr()">: $transpose,
-                    CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l1_hint,
-                    CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l2_hint,
-                    CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l3_hint)>
+                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l1_hint,
+                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l2_hint,
+                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l3_hint)>
 
   ];
   let skipDefaultBuilders = 1;
@@ -317,27 +317,75 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
     XeGPU_ValueType: $value,
     XeGPU_TensorDesc: $TensorDesc,
     XeGPU_MaskType: $mask,
-    OptionalAttr<XeGPU_WriteCacheAttr>: $l1_hint,
-    OptionalAttr<XeGPU_WriteCacheAttr>: $l2_hint,
-    OptionalAttr<XeGPU_WriteCacheAttr>: $l3_hint,
+    OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+    OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+    OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
     DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
   );
 
   let builders = [
     OpBuilder<(ins "Value": $value, "Value": $TensorDesc, "Value": $mask,
-        CArg<"xegpu::WriteCacheKindAttr", "xegpu::WriteCacheKindAttr()">: $l1_hint,
-        CArg<"xegpu::WriteCacheKindAttr", "xegpu::WriteCacheKindAttr()">: $l2_hint,
-        CArg<"xegpu::WriteCacheKindAttr", "xegpu::WriteCacheKindAttr()">: $l3_hint)>,
+        CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l1_hint,
+        CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l2_hint,
+        CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l3_hint)>,
     OpBuilder<(ins "Value": $value, "Value": $TensorDesc, "Value": $mask,
-        CArg<"xegpu::WriteCacheKind", "xegpu::WriteCacheKind::WRITE_BACK">: $l1_hint,
-        CArg<"xegpu::WriteCacheKind", "xegpu::WriteCacheKind::WRITE_BACK">: $l2_hint,
-        CArg<"xegpu::WriteCacheKind", "xegpu::WriteCacheKind::WRITE_BACK">: $l3_hint)>
+        CArg<"xegpu::CacheKind", "xegpu::CacheKind::WRITE_BACK">: $l1_hint,
+        CArg<"xegpu::CacheKind", "xegpu::CacheKind::WRITE_BACK">: $l2_hint,
+        CArg<"xegpu::CacheKind", "xegpu::CacheKind::WRITE_BACK">: $l3_hint)>
   ];
   let skipDefaultBuilders = 1;
 
   // Format: %3 = xegpu.load %1, %0 {l1_hint = cached, l2_hint = uncached}
   //                      : !xegpu.tensor_desc<16xf32, #xegpu.scattered>, vector<16xi1> -> vector<16xf32>
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
+  let summary = "prefetches a nD block to cache";
+  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
+         OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
+         OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
+         OptionalAttr<XeGPU_CacheAttr>: $l3_hint,
+         DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
+
+  let builders = [
+    OpBuilder<(ins "Value": $TensorDesc,
+      CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l1_hint,
+      CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l2_hint,
+      CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l3_hint)>,
+    OpBuilder<(ins "Value": $TensorDesc,
+      CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l1_hint,
+      CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l2_hint,
+      CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l3_hint)>
+  ];
+
+  let skipDefaultBuilders = 1;
+  let hasVerifier = 1;
+
+  // Format: xegpu.prefetch %tdesc {l1_hint = cached, l2_hint = uncached}:
+  //                                    !xegpu.tensor_desc<8x16xf16>
+  let hasCustomAssemblyFormat = 1;
+}
+
+def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
+  let summary = "update the offsets for the given tensor descriptor";
+  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
+                       XeGPU_OffsetType: $offsets,
+                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
+  let results = (outs XeGPU_TensorDesc: $result);
+
+  let builders = [
+    OpBuilder<(ins "Type": $result, "Value": $TensorDesc, "Value": $offsets)>
+  ];
+
+  let skipDefaultBuilders = 1;
+
+  let assemblyFormat = [{
+    $TensorDesc `,` $offsets (`{` `mode` `=` $mode^ `}`)?
+    attr-dict `:` qualified(type($TensorDesc)) `,` qualified(type($offsets)) `->`  qualified(type($result))
+  }];
+
   let hasVerifier = 1;
 }
 
@@ -374,54 +422,6 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
   let hasVerifier = 1;
 }
 
-def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
-  let summary = "update the offsets for the given tensor descriptor";
-  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
-                       XeGPU_OffsetType: $offsets,
-                       DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::VC">: $mode);
-  let results = (outs XeGPU_TensorDesc: $result);
-
-  let builders = [
-    OpBuilder<(ins "Type": $result, "Value": $TensorDesc, "Value": $offsets)>
-  ];
-
-  let skipDefaultBuilders = 1;
-
-  let assemblyFormat = [{
-    $TensorDesc `,` $offsets (`{` `mode` `=` $mode^ `}`)?
-    attr-dict `:` qualified(type($TensorDesc)) `,` qualified(type($offsets)) `->`  qualified(type($result))
-  }];
-
-  let hasVerifier = 1;
-}
-
-def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
-  let summary = "prefetches a nD block to cache";
-  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
-         OptionalAttr<XeGPU_ReadCacheAttr>: $l1_hint,
-         OptionalAttr<XeGPU_ReadCacheAttr>: $l2_hint,
-         OptionalAttr<XeGPU_ReadCacheAttr>: $l3_hint,
-         DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
-
-  let builders = [
-    OpBuilder<(ins "Value": $TensorDesc,
-      CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l1_hint,
-      CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l2_hint,
-      CArg<"xegpu::ReadCacheKindAttr", "xegpu::ReadCacheKindAttr()">: $l3_hint)>,
-    OpBuilder<(ins "Value": $TensorDesc,
-      CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l1_hint,
-      CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l2_hint,
-      CArg<"xegpu::ReadCacheKind", "xegpu::ReadCacheKind::CACHED">: $l3_hint)>
-  ];
-
-  let skipDefaultBuilders = 1;
-  let hasVerifier = 1;
-
-  // Format: xegpu.prefetch %tdesc {l1_hint = cached, l2_hint = uncached}:
-  //                                    !xegpu.tensor_desc<8x16xf16>
-  let hasCustomAssemblyFormat = 1;
-}
-
 def XeGPU_InvokeSIMDOp : XeGPU_Op<"invoke_SIMD", []> {
     let summary = "Invoke_SIMD operation";
     let description = [{
@@ -451,7 +451,7 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
     XeGPU_TensorDesc:$tensorDesc,
     XeGPU_MaskType:$mask,
     Optional<XeGPU_ValueType>:$value,
-    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::VC">: $mode
+    DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
   );
 
   let results = (outs XeGPU_ValueType:$result);
@@ -473,7 +473,7 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
 
 def XeGPU_AllocNbarrierOp: XeGPU_Op<"alloc_nbarrier", []> {
   let summary = "allocate a specific number of named barriers.";
-  let arguments = (ins I32Attr: $nbarrierCount);
+  let arguments = (ins I64Attr: $nbarrierCount);
   let assemblyFormat = "$nbarrierCount attr-dict";
 }
 

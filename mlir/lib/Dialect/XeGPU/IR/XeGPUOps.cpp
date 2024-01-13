@@ -23,6 +23,8 @@
 #define DEBUG_TYPE "xegpu"
 
 namespace mlir {
+class Token;
+
 namespace xegpu {
 
 extern bool printDefaultValues();
@@ -85,86 +87,51 @@ static bool verifyAndInferShape(std::vector<int64_t> &shape,
   return true;
 }
 
-template <typename CustomEnum, typename CustomEnumAttr>
-static ParseResult parseCustomEnumAttr(OpAsmParser &parser,
-                                       OperationState &result,
-                                       llvm::StringRef attrKeyword) {
-  auto loc = parser.getCurrentLocation();
-  auto attrOptional = FieldParser<CustomEnum, CustomEnum>::parse(parser);
-  if (failed(attrOptional))
-    return parser.emitError(loc, "invalid attribute specification");
-  auto attr =
-      CustomEnumAttr::get(parser.getBuilder().getContext(), *attrOptional);
-  result.addAttribute(attrKeyword, attr);
-  return success();
-}
-
-template <typename AttrType>
-static ParseResult parseBoolAndIntegerAttr(OpAsmParser &parser,
-                                           OperationState &result,
-                                           llvm::StringRef attrKeyword) {
-  AttrType attr;
-  Type ty;
-
-  if (std::is_same<AttrType, BoolAttr>::value) {
-    ty = parser.getBuilder().getIntegerType(1);
-  } else if (std::is_same<AttrType, IntegerAttr>::value) {
-    ty = parser.getBuilder().getIntegerType(32);
-  } else if (std::is_same<AttrType, DenseI64ArrayAttr>::value) {
-    ty = Type{};
-  } else {
-    llvm_unreachable("Unsupported Attribute Type.");
-  }
-
-  if (parser.parseCustomAttributeWithFallback(attr, ty))
-    return failure();
-
-  if (attr)
-    result.addAttribute(attrKeyword, attr);
-  return success();
-}
-
 static ParseResult
-parseOptionalAttrDict(OpAsmParser &parser, OperationState &result,
-                      llvm::ArrayRef<llvm::StringRef> allowedKeywords,
-                      bool isWrite = false) {
+parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, NamedAttrList &attributes) {
   // no optional attributes, return success
   if (failed(parser.parseOptionalLBrace()))
     return success();
 
+  llvm::SmallDenseSet<StringRef> seenKeys;
   auto parseElt = [&]() -> ParseResult {
+    // The name of an attribute can either be a keyword, or a string.
+    // as compared to mlir::parseOptionalAttrList, the cases of using 
+    // TOken::bare_identifier and Token::inttype as key maybe not handlered
+    std::string nameId;
     auto loc = parser.getCurrentLocation();
-    llvm::StringRef nameId;
-    if (parser.parseOptionalKeyword(&nameId, allowedKeywords))
-      return parser.emitError(loc, "invalid attribute keyword: ")
-             << nameId << ".\n";
+    if (parser.parseOptionalKeywordOrString(&nameId))
+      return parser.emitError(loc, "invalid attribute name: ") << nameId << ".\n";
 
-    if (parser.parseEqual())
-      return failure();
+    if (nameId.empty())
+      return parser.emitError(loc, "expected valid attribute name");
 
-    if (nameId == "l1_hint" || nameId == "l2_hint" || nameId == "l3_hint") {
-      if (isWrite)
-        return parseCustomEnumAttr<WriteCacheKind, WriteCacheKindAttr>(
-            parser, result, nameId);
-      else
-        return parseCustomEnumAttr<ReadCacheKind, ReadCacheKindAttr>(
-            parser, result, nameId);
+    if (!seenKeys.insert(nameId).second)
+      return parser.emitError(loc, "duplicate key '") 
+              << nameId << "' in dictionary attribute.";
+
+    // Lazy load a dialect in the context if there is a possible namespace.
+    auto splitName = StringRef(nameId).split('.');
+    if (!splitName.second.empty())
+      parser.getContext()->getOrLoadDialect(splitName.first);
+
+    // Try to parse the '=' for the attribute value.
+    if (parser.parseEqual()) {
+      // If there is no '=', it is treated as a unit attribute.
+      attributes.append(nameId, parser.getBuilder().getUnitAttr());
+      return success();
     }
 
     if (nameId == "mode") {
-      return parseCustomEnumAttr<ModeKind, ModeKindAttr>(parser, result, nameId);
+      ModeKindAttr attr;
+      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, attributes);
+    } else if (nameId == "l1_hint" || nameId == "l2_hint" || nameId == "l3_hint") {
+      CacheKindAttr attr;
+      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, attributes);
+    } else {
+      Attribute attr;
+      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, attributes);
     }
-
-    if (nameId == "chunk_size_per_lane" || nameId == "vnni_axis")
-      return parseBoolAndIntegerAttr<IntegerAttr>(parser, result, nameId);
-
-    if (nameId == "boundary_check")
-      return parseBoolAndIntegerAttr<BoolAttr>(parser, result, nameId);
-
-    if (nameId == "transpose")
-      return parseBoolAndIntegerAttr<DenseI64ArrayAttr>(parser, result, nameId);
-
-    llvm_unreachable("Unsupported attribute keyword.");
   };
 
   if (parser.parseCommaSeparatedList(parseElt))
@@ -314,7 +281,7 @@ ParseResult CreateNdDescOp::parse(OpAsmParser &parser, OperationState &result) {
       return failure();
   }
 
-  if (parseOptionalAttrDict(parser, result, {"boundary_check", "mode"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -540,9 +507,7 @@ ParseResult LoadNDOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(TensorDescRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(
-          parser, result,
-          {"mode", "vnni_axis", "transpose", "l1_hint", "l2_hint", "l3_hint"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -715,8 +680,7 @@ ParseResult StoreNDOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(TensorDescRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(parser, result,
-                            {"mode", "l1_hint", "l2_hint", "l3_hint"}, true))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -852,8 +816,7 @@ ParseResult PrefetchNDOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(TensorDescRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(parser, result,
-                            {"mode", "l1_hint", "l2_hint", "l3_hint"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -951,7 +914,7 @@ ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   // parse the optional attributes 
-  if (parseOptionalAttrDict(parser, result, {"chunk_size_per_lane", "mode"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -980,59 +943,6 @@ ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
   return success();
 }
-
-// ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
-//   OpAsmParser::UnresolvedOperand sourceRawOperands[1];
-//   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> sourceOperands(
-//       sourceRawOperands);
-//   llvm::SMLoc sourceOperandsLoc = parser.getCurrentLocation();
-//   if (parser.parseOperand(sourceRawOperands[0]))
-//     return failure();
-
-//   if (parser.parseComma())
-//     return failure();
-
-//   OpAsmParser::UnresolvedOperand offsetsRawOperands[1];
-//   llvm::ArrayRef<OpAsmParser::UnresolvedOperand> offsetsOperands(
-//       offsetsRawOperands);
-//   llvm::SMLoc offsetsOperandsLoc = parser.getCurrentLocation();
-//   if (parser.parseOperand(offsetsRawOperands[0]))
-//     return failure();
-
-//   if (parseOptionalAttrDict(parser, result, {"chunk_size_per_lane", "mode"}))
-//     return failure();
-
-//   if (parser.parseColon())
-//     return failure();
-
-//   Type sourceRawTypes[1];
-//   llvm::ArrayRef<Type> sourceTypes(sourceRawTypes);
-//   if (parser.parseType(sourceRawTypes[0]))
-//     return failure();
-//   if (parser.parseComma())
-//     return failure();
-
-//   Type offsetsRawTypes[1];
-//   llvm::ArrayRef<Type> offsetsTypes(offsetsRawTypes);
-//   if (parser.parseType(offsetsRawTypes[0]))
-//     return failure();
-//   if (parser.parseArrow())
-//     return failure();
-
-//   Type TensorDescRawTypes[1];
-//   llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-//   if (parser.parseType(TensorDescRawTypes[0]))
-//     return failure();
-
-//   result.addTypes(TensorDescTypes);
-//   if (parser.resolveOperands(sourceOperands, sourceTypes, sourceOperandsLoc,
-//                              result.operands))
-//     return failure();
-//   if (parser.resolveOperands(offsetsOperands, offsetsTypes, offsetsOperandsLoc,
-//                              result.operands))
-//     return failure();
-//   return success();
-// }
 
 void CreateDescOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
@@ -1122,8 +1032,8 @@ LogicalResult CreateDescOp::verify() {
 //===----------------------------------------------------------------------===//
 void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
                          Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, ReadCacheKindAttr l1_hint,
-                         ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
+                         DenseI64ArrayAttr transpose, CacheKindAttr l1_hint,
+                         CacheKindAttr l2_hint, CacheKindAttr l3_hint) {
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   if (vnni_axis)
@@ -1148,8 +1058,8 @@ void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
 
 void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
                          Value TensorDesc, Value mask, IntegerAttr vnni_axis,
-                         DenseI64ArrayAttr transpose, ReadCacheKind l1_hint,
-                         ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
+                         DenseI64ArrayAttr transpose, CacheKind l1_hint,
+                         CacheKind l2_hint, CacheKind l3_hint) {
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   if (vnni_axis)
@@ -1159,11 +1069,11 @@ void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
     state.getOrAddProperties<Properties>().transpose = transpose;
 
   state.getOrAddProperties<Properties>().l1_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
+      CacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
+      CacheKindAttr::get(builder.getContext(), l2_hint);
   state.getOrAddProperties<Properties>().l3_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
+      CacheKindAttr::get(builder.getContext(), l3_hint);
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
   state.addTypes(value);
@@ -1196,9 +1106,7 @@ ParseResult LoadGatherOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(maskRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(
-          parser, result,
-          {"mode", "vnni_axis", "transpose", "l1_hint", "l2_hint", "l3_hint"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -1370,9 +1278,9 @@ LogicalResult LoadGatherOp::verify() {
 //===----------------------------------------------------------------------===//
 void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
                            Value value, Value TensorDesc, Value mask,
-                           WriteCacheKindAttr l1_hint,
-                           WriteCacheKindAttr l2_hint,
-                           WriteCacheKindAttr l3_hint) {
+                           CacheKindAttr l1_hint,
+                           CacheKindAttr l2_hint,
+                           CacheKindAttr l3_hint) {
   state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
@@ -1391,18 +1299,18 @@ void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
 
 void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
                            Value value, Value TensorDesc, Value mask,
-                           WriteCacheKind l1_hint, WriteCacheKind l2_hint,
-                           WriteCacheKind l3_hint) {
+                           CacheKind l1_hint, CacheKind l2_hint,
+                           CacheKind l3_hint) {
   state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
   state.getOrAddProperties<Properties>().l1_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l1_hint);
+      CacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l2_hint);
+      CacheKindAttr::get(builder.getContext(), l2_hint);
   ;
   state.getOrAddProperties<Properties>().l3_hint =
-      WriteCacheKindAttr::get(builder.getContext(), l3_hint);
+      CacheKindAttr::get(builder.getContext(), l3_hint);
   ;
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
@@ -1450,8 +1358,7 @@ ParseResult StoreScatterOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(maskRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(parser, result,
-                            {"mode", "l1_hint", "l2_hint", "l3_hint"}, true))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -1575,8 +1482,8 @@ LogicalResult StoreScatterOp::verify() {
 // XeGPU_PrefetchOp
 //===----------------------------------------------------------------------===//
 void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, ReadCacheKindAttr l1_hint,
-                       ReadCacheKindAttr l2_hint, ReadCacheKindAttr l3_hint) {
+                       Value TensorDesc, CacheKindAttr l1_hint,
+                       CacheKindAttr l2_hint, CacheKindAttr l3_hint) {
   state.addOperands(TensorDesc);
   if (l1_hint)
     state.getOrAddProperties<Properties>().l1_hint = l1_hint;
@@ -1592,15 +1499,15 @@ void PrefetchOp::build(OpBuilder &builder, OperationState &state,
 }
 
 void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, ReadCacheKind l1_hint,
-                       ReadCacheKind l2_hint, ReadCacheKind l3_hint) {
+                       Value TensorDesc, CacheKind l1_hint,
+                       CacheKind l2_hint, CacheKind l3_hint) {
   state.addOperands(TensorDesc);
   state.getOrAddProperties<Properties>().l1_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l1_hint);
+      CacheKindAttr::get(builder.getContext(), l1_hint);
   state.getOrAddProperties<Properties>().l2_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l2_hint);
+      CacheKindAttr::get(builder.getContext(), l2_hint);
   state.getOrAddProperties<Properties>().l3_hint =
-      ReadCacheKindAttr::get(builder.getContext(), l3_hint);
+      CacheKindAttr::get(builder.getContext(), l3_hint);
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
 }
@@ -1617,8 +1524,7 @@ ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(TensorDescRawOperands[0]))
     return failure();
 
-  if (parseOptionalAttrDict(parser, result,
-                            {"mode", "l1_hint", "l2_hint", "l3_hint"}))
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result.attributes))
     return failure();
 
   if (parser.parseColon())
@@ -1666,12 +1572,30 @@ LogicalResult PrefetchOp::verify() {
   auto tdescTy = getTensorDesc().getType();
   auto mapping = tdescTy.getMapping();
 
-  if (tdescTy.getScattered())
+  auto isValidHint = [&](CacheKindAttr attr) -> bool {
+    if (!attr) return true;
+    auto kind = attr.getValue();
+    return kind == CacheKind::CACHED ||
+           kind == CacheKind::UNCACHED ||
+           kind == CacheKind::STREAMING ||
+           kind == CacheKind::READ_INVALIDATE;
+  };
+
+  if (!isValidHint(getL1HintAttr())) 
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
+
+  if (!isValidHint(getL2HintAttr())) 
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
+
+  if (!isValidHint(getL3HintAttr())) 
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
+  if (!tdescTy.getScattered())
     return emitOpError("Invalid TensorDesc. PrefetchOp only works on "
                        "TensorDescs with ScatteredAttr.");
 
   if (mode != ModeKind::VC || mapping) {
-    return emitOpError("PrefetchOp only supports VC mode. and mapping "
+    return emitOpError("PrefetchOp only supports VC mode, and mapping "
                        "attribute of TensorDesc is not expected.\n");
   }
 
