@@ -289,18 +289,19 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
   let results = (outs XeGPU_ValueType: $value);
 
   let builders = [
-    OpBuilder<(ins "mlir::Type": $value, "mlir::Value": $TensorDesc, "mlir::Value": $mask, "mlir::IntegerAttr": $vnni_axis,
-                    CArg<"mlir::DenseI64ArrayAttr", "mlir::DenseI64ArrayAttr()">: $transpose,
-                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l1_hint,
-                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l2_hint,
-                    CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l3_hint)>,
+    OpBuilder<(ins "mlir::Type": $value, "mlir::Value": $TensorDesc, 
+                   "mlir::Value": $mask, "mlir::IntegerAttr": $vnni_axis,
+                   CArg<"mlir::DenseI64ArrayAttr", "mlir::DenseI64ArrayAttr()">: $transpose,
+                   CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l1_hint,
+                   CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l2_hint,
+                   CArg<"xegpu::CacheKindAttr", "xegpu::CacheKindAttr()">: $l3_hint)>,
 
-    OpBuilder<(ins "Type": $value, "Value": $TensorDesc, "Value": $mask, "IntegerAttr": $vnni_axis,
-                    CArg<"DenseI64ArrayAttr", "DenseI64ArrayAttr()">: $transpose,
-                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l1_hint,
-                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l2_hint,
-                    CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l3_hint)>
-
+    OpBuilder<(ins "mlir::Type": $value, "mlir::Value": $TensorDesc, 
+                   "mlir::Value": $mask, "mlir::IntegerAttr": $vnni_axis,
+                   CArg<"DenseI64ArrayAttr", "DenseI64ArrayAttr()">: $transpose,
+                   CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l1_hint,
+                   CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l2_hint,
+                   CArg<"xegpu::CacheKind", "xegpu::CacheKind::CACHED">: $l3_hint)>
   ];
   let skipDefaultBuilders = 1;
 
@@ -380,11 +381,12 @@ def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
   ];
 
   let skipDefaultBuilders = 1;
+  let hasCustomAssemblyFormat = 1;
 
-  let assemblyFormat = [{
-    $TensorDesc `,` $offsets (`{` `mode` `=` $mode^ `}`)?
-    attr-dict `:` qualified(type($TensorDesc)) `,` qualified(type($offsets)) `->`  qualified(type($result))
-  }];
+  // let assemblyFormat = [{
+  //   $TensorDesc `,` $offsets (`{` `mode` `=` $mode^ `}`)?
+  //   attr-dict `:` qualified(type($TensorDesc)) `,` qualified(type($offsets)) `->`  qualified(type($result))
+  // }];
 
   let hasVerifier = 1;
 }
@@ -398,10 +400,12 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
     DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode
   );
   let results = (outs XeGPU_Vector2DType: $result);
-  let assemblyFormat = [{
-     $lhs `,` $rhs (`,` $acc^)? (` ``{` `mode` `=` $mode^ `}`)? attr-dict `:`
-     qualified(type($lhs)) `,` qualified(type($rhs)) (`,` qualified(type($acc))^)? `->` qualified(type($result))
-  }];
+//  let assemblyFormat = [{
+//     $lhs `,` $rhs (`,` $acc^)? (` ``{` `mode` `=` $mode^ `}`)? attr-dict `:`
+//     qualified(type($lhs)) `,` qualified(type($rhs)) (`,` qualified(type($acc))^)? `->` qualified(type($result))
+//  }];
+
+  let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
     VectorType getLhsType() {
@@ -455,9 +459,10 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
   );
 
   let results = (outs XeGPU_ValueType:$result);
-  let assemblyFormat = [{
-    $kind $tensorDesc `,` $mask (`,` $value^)? (`{` `mode` `=` $mode^ `}`)? attr-dict `:` qualified(type(operands)) `->` type($result)
-  }];
+  let hasCustomAssemblyFormat = 1;
+//  let assemblyFormat = [{
+//    $kind $tensorDesc `,` $mask (`,` $value^)? (`{` `mode` `=` $mode^ `}`)? attr-dict `:` qualified(type(operands)) `->` type($result)
+//  }];
 
   let builders = [
     OpBuilder<(ins "Type": $result, "xegpu::AtomicRMWKindAttr": $kind,
@@ -486,11 +491,12 @@ def XeGPU_CreateNbarrierOp: XeGPU_Op<"create_nbarrier", []> {
           I8Attr: $num_consumers,
           DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
   let results = (outs XeGPU_Nbarrier: $result);
-  let assemblyFormat = [{
-    $nbarrier_id `,` $nbarrier_role
-    attr-dict `:` `(` qualified(type($nbarrier_id)) `,` qualified(type($nbarrier_role)) `)`
-    `->` qualified(type($result))
-  }];
+  let hasCustomAssemblyFormat = 1;
+//  let assemblyFormat = [{
+//    $nbarrier_id `,` $nbarrier_role
+//    attr-dict `:` `(` qualified(type($nbarrier_id)) `,` qualified(type($nbarrier_role)) `)`
+//    `->` qualified(type($result))
+//  }];
 }
 
 def XeGPU_NbarrierArriveOp: XeGPU_Op<"nbarrier_arrive", []> {
