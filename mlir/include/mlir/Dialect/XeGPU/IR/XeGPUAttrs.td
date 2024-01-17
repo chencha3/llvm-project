@@ -10,12 +10,11 @@
 #define MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD
 
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
-
 include "mlir/IR/EnumAttr.td"
 
 class XeGPUAttr<string name, string attrMnemonic, list<Trait> traits = [],
                 string baseCppClass = "::mlir::Attribute">
-    : AttrDef<XeGPUDialect, name, traits, baseCppClass> {
+    : AttrDef<XeGPU_Dialect, name, traits, baseCppClass> {
   let mnemonic = attrMnemonic;
 }
 
@@ -49,7 +48,7 @@ def XeGPU_SgMapAttr: XeGPUAttr<"SubGroupMap", "sg_map"> {
 
 def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
   let parameters = (ins
-        DefaultValuedParameter<"xegpu::MemoryScope", "xegpu::MemoryScope::GLOBAL">: $memory_scope,
+        DefaultValuedParameter<"xegpu::MemoryScopeKind", "xegpu::MemoryScopeKind::GLOBAL">: $memory_scope,
         DefaultValuedParameter<"int", "1">: $array_length,
         DefaultValuedParameter<"bool", "true">: $boundary_check,
         OptionalParameter<"xegpu::ScatteredAttr">: $scattered,
@@ -58,7 +57,7 @@ def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
 
   let builders = [
     AttrBuilder<(ins
-      CArg<"xegpu::MemoryScope", "xegpu::MemoryScope::GLOBAL">:$memory_scope,
+      CArg<"xegpu::MemoryScopeKind", "xegpu::MemoryScopeKind::GLOBAL">:$memory_scope,
       CArg<"int", "1">:$array_length,
       CArg<"xegpu::ScatteredAttr", "{}">:$scattered,
       CArg<"xegpu::SubGroupMapAttr", "{}">:$map
@@ -72,65 +71,80 @@ def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
   let hasCustomAssemblyFormat = true;
 }
 
-def XeGPU_ArgTypeAttr : I32EnumAttr<
-    "ArgType", "", [ I32EnumAttrCase<"Vector", 0, "vector">,
-                  I32EnumAttrCase<"Scalar", 1, "scalar"> ]> {
-    let cppNamespace = "::mlir::xegpu";
-}
-
-def XeGPU_ModeAttr : I32EnumAttr<
-    "Mode", "", [ I32EnumAttrCase<"SIMT", 0, "simt">,
-                  I32EnumAttrCase<"VC", 1, "vc"> ]> {
-    let cppNamespace = "::mlir::xegpu";
-}
-
-def XeGPU_MemoryScopeAttr : I32EnumAttr<
-    "MemoryScope", "", [ I32EnumAttrCase<"GLOBAL", 0, "global">,
-                         I32EnumAttrCase<"SLM", 1, "slm"> ]> {
-    let cppNamespace = "::mlir::xegpu";
-}
-
-def XeGPU_CacheReadAttr : I32EnumAttr<
-    "CacheReadHint", "", [ I32EnumAttrCase<"UNCACHED", 0, "uncached">,
-                           I32EnumAttrCase<"CACHED", 1, "cached">,
-                           I32EnumAttrCase<"STREAMING", 2, "streaming">,
-                           I32EnumAttrCase<"READ_INVALIDATE", 3, "read_invalidate"> ]> {
-
-    let cppNamespace = "::mlir::xegpu";
-}
-
-def XeGPU_CacheWriteAttr : I32EnumAttr<
-    "CacheWriteHint", "", [ I32EnumAttrCase<"UNCACHED", 0, "uncached">,
-                            I32EnumAttrCase<"WRITE_THROUGH", 1, "write_through">,
-                            I32EnumAttrCase<"WRITE_BACK", 2, "write_back">,
-                            I32EnumAttrCase<"STREAMING", 3, "streaming"> ]> {
-
-    let cppNamespace = "::mlir::xegpu";
-}
-
-// RMW kind attribute
-def ATOMIC_RMW_KIND_ADDF    : I64EnumAttrCase<"addf", 0>;
-def ATOMIC_RMW_KIND_ADDI    : I64EnumAttrCase<"addi", 1>;
-def ATOMIC_RMW_KIND_ASSIGN  : I64EnumAttrCase<"assign", 2>;
-def ATOMIC_RMW_KIND_MAXF    : I64EnumAttrCase<"maxf", 3>;
-def ATOMIC_RMW_KIND_MAXS    : I64EnumAttrCase<"maxs", 4>;
-def ATOMIC_RMW_KIND_MAXU    : I64EnumAttrCase<"maxu", 5>;
-def ATOMIC_RMW_KIND_MINF    : I64EnumAttrCase<"minf", 6>;
-def ATOMIC_RMW_KIND_MINS    : I64EnumAttrCase<"mins", 7>;
-def ATOMIC_RMW_KIND_MINU    : I64EnumAttrCase<"minu", 8>;
-def ATOMIC_RMW_KIND_MULF    : I64EnumAttrCase<"mulf", 9>;
-def ATOMIC_RMW_KIND_MULI    : I64EnumAttrCase<"muli", 10>;
-def ATOMIC_RMW_KIND_ORI     : I64EnumAttrCase<"ori", 11>;
-def ATOMIC_RMW_KIND_ANDI    : I64EnumAttrCase<"andi", 12>;
-
-def XeGPU_AtomicRMWKindAttr : I64EnumAttr<
-    "AtomicRMWKind", "",
-    [ATOMIC_RMW_KIND_ADDF, ATOMIC_RMW_KIND_ADDI, ATOMIC_RMW_KIND_ASSIGN,
-     ATOMIC_RMW_KIND_MAXF, ATOMIC_RMW_KIND_MAXS, ATOMIC_RMW_KIND_MAXU,
-     ATOMIC_RMW_KIND_MINF, ATOMIC_RMW_KIND_MINS, ATOMIC_RMW_KIND_MINU,
-     ATOMIC_RMW_KIND_MULF, ATOMIC_RMW_KIND_MULI, ATOMIC_RMW_KIND_ORI,
-     ATOMIC_RMW_KIND_ANDI]> {
+def ARG_TYPE_VECTOR : I32EnumAttrCase<"VECTOR", 0, "vector">; 
+def ARG_TYPE_SCALAR : I32EnumAttrCase<"SCALAR", 1, "scalar">; 
+def XeGPU_ArgTypeKind : I32EnumAttr<"ArgTypeKind", 
+               "Argument type for Invoke_SIMD op", 
+  [ARG_TYPE_VECTOR, ARG_TYPE_SCALAR]> {
+  let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::xegpu";
 }
+
+def MODE_SIMT : I32EnumAttrCase<"SIMT", 0, "simt">;
+def MODE_VC : I32EnumAttrCase<"VC", 1, "vc">;
+def XeGPU_ModeKind : I32EnumAttr<"ModeKind", 
+             "The Mode an operator runs on", 
+  [MODE_SIMT, MODE_VC]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::xegpu";
+}
+
+def MEMORY_SCOPE_GLOBAL: I32EnumAttrCase<"GLOBAL", 0, "global">;
+def MEMORY_SCOPE_SHARED: I32EnumAttrCase<"SLM", 1, "slm">;
+def XeGPU_MemoryScopeKind: I32EnumAttr<"MemoryScopeKind", 
+      "The scope of the memory the tensor descritor is created for", 
+  [MEMORY_SCOPE_GLOBAL, MEMORY_SCOPE_SHARED]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::xegpu";
+}
+
+def CACHE_KIND_CACHED:        I32EnumAttrCase<"CACHED", 0, "cached">;                    // valid for read and write
+def CACHE_KIND_UNCACHED:      I32EnumAttrCase<"UNCACHED", 1, "uncached">;                // valid for read and write
+def CACHE_KIND_STREAMING:     I32EnumAttrCase<"STREAMING", 2, "streaming">;              // valid for read only
+def CACHE_KIND_INVALIDATE:    I32EnumAttrCase<"READ_INVALIDATE", 3, "read_invalidate">;  // valid for read only
+def CACHE_KIND_WRITE_BACK:    I32EnumAttrCase<"WRITE_BACK", 4, "write_back">;            // valid for write only
+def CACHE_KIND_WRITE_THROUGH: I32EnumAttrCase<"WRITE_THROUGH", 5, "write_through">;      // valid for write only
+
+
+
+def XeGPU_CacheKind : I32EnumAttr<"CacheKind", "Cache kind", 
+  [CACHE_KIND_CACHED, CACHE_KIND_UNCACHED, 
+   CACHE_KIND_STREAMING, CACHE_KIND_INVALIDATE,
+   CACHE_KIND_WRITE_BACK, CACHE_KIND_WRITE_THROUGH]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::xegpu";
+}
+
+def XeGPU_ArgTypeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ArgTypeKind, "arg_type_kind">;
+def XeGPU_ModeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ModeKind, "mode_kind">;
+def XeGPU_MemoryScopeAttr : EnumAttr<XeGPU_Dialect, XeGPU_MemoryScopeKind, "memory_scope_kind">;
+def XeGPU_CacheAttr : EnumAttr<XeGPU_Dialect, XeGPU_CacheKind, "cache_kind">;
+
+// RMW kind attribute
+def ATOMIC_RMW_KIND_ADDF    : I32EnumAttrCase<"addf", 0>;
+def ATOMIC_RMW_KIND_ADDI    : I32EnumAttrCase<"addi", 1>;
+def ATOMIC_RMW_KIND_ASSIGN  : I32EnumAttrCase<"assign", 2>;
+def ATOMIC_RMW_KIND_MAXF    : I32EnumAttrCase<"maxf", 3>;
+def ATOMIC_RMW_KIND_MAXS    : I32EnumAttrCase<"maxs", 4>;
+def ATOMIC_RMW_KIND_MAXU    : I32EnumAttrCase<"maxu", 5>;
+def ATOMIC_RMW_KIND_MINF    : I32EnumAttrCase<"minf", 6>;
+def ATOMIC_RMW_KIND_MINS    : I32EnumAttrCase<"mins", 7>;
+def ATOMIC_RMW_KIND_MINU    : I32EnumAttrCase<"minu", 8>;
+def ATOMIC_RMW_KIND_MULF    : I32EnumAttrCase<"mulf", 9>;
+def ATOMIC_RMW_KIND_MULI    : I32EnumAttrCase<"muli", 10>;
+def ATOMIC_RMW_KIND_ORI     : I32EnumAttrCase<"ori", 11>;
+def ATOMIC_RMW_KIND_ANDI    : I32EnumAttrCase<"andi", 12>;
+
+def XeGPU_AtomicRMWKind : I32EnumAttr<"AtomicRMWKind", 
+                       "Operation type for AtomicRMW",
+  [ATOMIC_RMW_KIND_ADDF, ATOMIC_RMW_KIND_ADDI, ATOMIC_RMW_KIND_ASSIGN,
+   ATOMIC_RMW_KIND_MAXF, ATOMIC_RMW_KIND_MAXS, ATOMIC_RMW_KIND_MAXU,
+   ATOMIC_RMW_KIND_MINF, ATOMIC_RMW_KIND_MINS, ATOMIC_RMW_KIND_MINU,
+   ATOMIC_RMW_KIND_MULF, ATOMIC_RMW_KIND_MULI, ATOMIC_RMW_KIND_ORI,
+   ATOMIC_RMW_KIND_ANDI]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::xegpu";
+}
+def XeGPU_AtomicRMWKindAttr : EnumAttr<XeGPU_Dialect, XeGPU_AtomicRMWKind, "atomic_rmw_kind">;
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUATTRS_TD

@@ -15,7 +15,6 @@ include "mlir/Dialect/XeGPU/IR/XeGPUAttrs.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
 
 // An Integer array attribute with fixed 2 elements.
-def XeGPU_IntArrayAttr2: ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<2>]>;
 def XeGPU_IntType: AnyTypeOf<[I1, I8, I16, I32, I64, SI1, SI8, SI16, SI32, SI64, UI1, UI8, UI16, UI32, UI64]>;
 def XeGPU_FloatType: AnyTypeOf<[F16, F32, F64, BF16, TF32]>;
 def XeGPU_ScalarType: AnyTypeOf<[XeGPU_IntType, XeGPU_FloatType]>;
@@ -31,7 +30,7 @@ def XeGPU_Vector2DType: VectorOfRankAndType<[2], [XeGPU_ScalarType]>;
 // common base class for types in XeGPU dialect
 class XeGPUTypeDef<string name, string typeMnemonic, list<Trait> traits = [],
                    string baseCppClass = "::mlir::Type">
-    : TypeDef<XeGPUDialect, name, traits, baseCppClass> {
+    : TypeDef<XeGPU_Dialect, name, traits, baseCppClass> {
   let mnemonic = typeMnemonic;
 }
 
@@ -108,13 +107,13 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
     )>,
     TypeBuilder<(ins
       "llvm::ArrayRef<int64_t>": $shape, "mlir::Type": $elementType,
-      "mlir::xegpu::MemoryScope": $memory_scope, "int": $array_length,
+      "mlir::xegpu::MemoryScopeKind": $memory_scope, "int": $array_length,
       "bool": $boundary_check, "mlir::xegpu::ScatteredAttr": $scattered,
       "mlir::xegpu::SubGroupMapAttr": $mapping
     )>,
     TypeBuilderWithInferredContext<(ins
       "llvm::ArrayRef<int64_t>": $shape, "mlir::Type": $elementType,
-      "mlir::xegpu::MemoryScope": $memory_scope, "int": $array_length,
+      "mlir::xegpu::MemoryScopeKind": $memory_scope, "int": $array_length,
       "bool": $boundary_check, "mlir::xegpu::ScatteredAttr": $scattered,
       "mlir::xegpu::SubGroupMapAttr": $mapping
     )>
@@ -147,7 +146,7 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
       return llvm::dyn_cast_if_present<ScatteredAttr>(getEncoding());
     }
 
-    xegpu::MemoryScope getMemoryScope();
+    xegpu::MemoryScopeKind getMemoryScope();
     int getArrayLength();
     bool getBoundaryCheck();
     xegpu::ScatteredAttr getScattered();
