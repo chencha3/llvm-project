@@ -93,7 +93,7 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
   if (failed(parser.parseOptionalLBrace()))
     return success();
 
-  llvm::SmallDenseSet<StringRef> seenKeys;
+  llvm::SmallDenseSet<StringRef, 8> seenKeys;
   auto parseElt = [&]() -> ParseResult {
     // The name of an attribute can either be a keyword, or a string.
     // as compared to mlir::parseOptionalAttrList, the cases of using 
@@ -122,7 +122,7 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
       return success();
     }
 
-    // handle xegpu specific attributes
+    // for xegpu specific attributes
     if (nameId == "mode") {
       ModeKindAttr attr;
       return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
@@ -130,10 +130,26 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
       CacheKindAttr attr;
       return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
     } else if (nameId == "transpose") {
-      DenseI64ArrayAttr attr;
-      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
+      // in form of [4, 5]
+      if (succeeded(parser.parseOptionalLSquare())) { 
+        Attribute attr;
+        // handle empty list case
+        if (succeeded(parser.parseOptionalRSquare())) {
+          attr = DenseI64ArrayAttr::get(parser.getContext(), {});
+        } else {
+          attr = DenseI64ArrayAttr::parseWithoutBraces(parser, Type{});
+          if (failed(parser.parseRSquare())) 
+            return failure(); 
+        }
+        if (!attr) return failure(); 
+        result.addAttribute(nameId, attr);
+        return success(); 
+      } else {
+        // in form of array<i64: 4, 5>
+        DenseI64ArrayAttr attr;
+        return parser.parseAttribute(attr, nameId, result.attributes);
+      }
     } else {
-      // for generic attribtes
       Attribute attr;
       return parser.parseAttribute(attr, nameId, result.attributes);
     }
@@ -144,30 +160,6 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
 
   return parser.parseRBrace();
 }
-
-template <typename T>
-static void printCacheHintAttrs(OpAsmPrinter &printer, T op, bool printSep) {
-  if (op.getL1HintAttr()) {
-    if (printSep)
-      printer << ", ";
-    printer << "l1_hint = " << op.getL1Hint().value();
-    printSep = true;
-  }
-
-  if (op.getL2HintAttr()) {
-    if (printSep)
-      printer << ", ";
-    printer << "l2_hint = " << op.getL2Hint().value();
-    printSep = true;
-  }
-
-  if (op.getL3HintAttr()) {
-    if (printSep)
-      printer << ", ";
-    printer << "l3_hint = " << op.getL3Hint().value();
-  }
-}
-
 
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateNdDescOp
@@ -241,11 +233,9 @@ void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
 
 ParseResult CreateNdDescOp::parse(OpAsmParser &parser, OperationState &result) {
   // parse the source operand
-  OpAsmParser::UnresolvedOperand sourceRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> sourceOperands(
-      sourceRawOperands);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> sourceOperands(1);
   llvm::SMLoc sourceOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(sourceRawOperands[0]))
+  if (parser.parseOperand(sourceOperands[0]))
     return failure();
 
   // parse the offset operand, in format of [x, y]
@@ -286,23 +276,27 @@ ParseResult CreateNdDescOp::parse(OpAsmParser &parser, OperationState &result) {
       return failure();
   }
 
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  Type sourceRawTypes[1];
-  llvm::ArrayRef<Type> sourceTypes(sourceRawTypes);
-  if (parser.parseType(sourceRawTypes[0]))
+  llvm::SmallVector<Type> sourceTypes(1);
+  if (parser.parseType(sourceTypes[0]))
     return failure();
 
   if (parser.parseArrow())
     return failure();
 
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  if (parser.parseType(TensorDescRawTypes[0]))
+  llvm::SmallVector<Type> TensorDescTypes(1);
+  if (parser.parseType(TensorDescTypes[0]))
     return failure();
   result.addAttribute("operandSegmentSizes",
                       parser.getBuilder().getDenseI32ArrayAttr(
@@ -310,11 +304,12 @@ ParseResult CreateNdDescOp::parse(OpAsmParser &parser, OperationState &result) {
                            static_cast<int32_t>(shapeOperands.size()),
                            static_cast<int32_t>(stridesOperands.size())}));
 
-  Type indexType = parser.getBuilder().getIndexType();
   result.addTypes(TensorDescTypes);
   if (parser.resolveOperands(sourceOperands, sourceTypes, sourceOperandsLoc,
                              result.operands))
     return failure();
+
+  Type indexType = parser.getBuilder().getIndexType();
   if (parser.resolveOperands(offsetsOperands, indexType, offsetsOperandsLoc,
                              result.operands))
     return failure();
@@ -349,11 +344,13 @@ void CreateNdDescOp::print(OpAsmPrinter &printer) {
     printer << "]";
   }
 
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << ' ' << "{";
-    printer << "mode = " << mode;
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  elidedAttrs.push_back("static_offsets");
+  elidedAttrs.push_back("operandSegmentSizes");
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");
+  
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -452,8 +449,8 @@ llvm::SmallVector<OpFoldResult> CreateNdDescOp::getShape() {
     return shape;
   }
 
-  emitOpError("The shape information is missing.");
-  llvm_unreachable("Unexpected error in CreateNdDescOp.\n");
+  llvm_unreachable("Unexpected error in CreateNdDescOp. " 
+                   "The shape information is missing.\n");
 }
 
 llvm::ArrayRef<int64_t> CreateNdDescOp::getStaticStrides() {
@@ -505,35 +502,36 @@ llvm::ArrayRef<int64_t> CreateNdDescOp::getTensorDescShape() {
 //===----------------------------------------------------------------------===//
 
 ParseResult LoadNDOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
-  llvm::SMLoc TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands(1);
+  llvm::SMLoc OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(Operands[0]))
     return failure();
 
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  if (parser.parseType(TensorDescRawTypes[0]))
+  llvm::SmallVector<Type> Types(1);
+  if (parser.parseType(Types[0]))
     return failure();
 
   if (parser.parseArrow())
     return failure();
 
-  Type valueRawTypes[1];
-  llvm::ArrayRef<Type> valueTypes(valueRawTypes);
-  if (parser.parseType(valueRawTypes[0]))
+  llvm::SmallVector<Type> valueTypes(1);
+  if (parser.parseType(valueTypes[0]))
     return failure();
 
   result.addTypes(valueTypes);
-  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
-                             TensorDescOperandsLoc, result.operands))
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
 
   return success();
@@ -541,42 +539,16 @@ ParseResult LoadNDOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void LoadNDOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
 
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << mode;
-    printSep = true;
-  }
-
-  if (getVnniAxisAttr()) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "vnni_axis = " << getVnniAxis().value();
-    printSep = true;
-  }
-
-  if (getTransposeAttr()) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "transpose = ";
-    getTransposeAttr().print(printer);
-    printSep = true;
-  }
-
-  printCacheHintAttrs<LoadNDOp>(printer, *this, printSep);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");
+  
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -668,48 +640,37 @@ LogicalResult LoadNDOp::verify() {
 // XeGPU_StoreNDOp
 //===----------------------------------------------------------------------===//
 ParseResult StoreNDOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand valueRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> valueOperands(
-      valueRawOperands);
-  llvm::SMLoc valueOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(valueRawOperands[0]))
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands(2);
+  llvm::SMLoc OperandsLoc = parser.getCurrentLocation();
+  // parse value
+  if (parser.parseOperand(Operands[0]))
     return failure();
 
   if (parser.parseComma())
     return failure();
 
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
-  llvm::SMLoc TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
+  // parse TensorDesc
+  if (parser.parseOperand(Operands[1]))
     return failure();
 
+  // parse optional attributes
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  Type valueRawTypes[1];
-  llvm::ArrayRef<Type> valueTypes(valueRawTypes);
-  if (parser.parseType(valueRawTypes[0]))
+  llvm::SmallVector<Type> Types;
+  if (parser.parseTypeList(Types))
     return failure();
 
-  if (parser.parseComma())
-    return failure();
-
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  if (parser.parseType(TensorDescRawTypes[0]))
-    return failure();
-
-  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
-                             TensorDescOperandsLoc, result.operands))
-    return failure();
-
-  if (parser.resolveOperands(valueOperands, valueTypes, valueOperandsLoc,
-                             result.operands))
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
 
   return success();
@@ -717,9 +678,7 @@ ParseResult StoreNDOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void StoreNDOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  [[maybe_unused]] bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
 
   printer << ' ';
   printer << getValue();
@@ -727,20 +686,10 @@ void StoreNDOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << getMode();
-    printSep = true;
-  }
-
-  printCacheHintAttrs<StoreNDOp>(printer, *this, true);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");  
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -810,24 +759,27 @@ LogicalResult StoreNDOp::verify() {
 // XeGPU_PrefetchNDOp
 //===----------------------------------------------------------------------===//
 ParseResult PrefetchNDOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> TensorDescOperands(1);
+  llvm::SmallVector<Type> TensorDescTypes(1);
   llvm::SMLoc TensorDescOperandsLoc;
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
 
   TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
+  if (parser.parseOperand(TensorDescOperands[0]))
     return failure();
 
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseType(TensorDescRawTypes[0]))
+  if (parser.parseType(TensorDescTypes[0]))
     return failure();
   if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
                              TensorDescOperandsLoc, result.operands))
@@ -837,26 +789,15 @@ ParseResult PrefetchNDOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void PrefetchNDOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  [[maybe_unused]] bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
+
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << getMode();
-    printSep = true;
-  }
-
-  printCacheHintAttrs<PrefetchNDOp>(printer, *this, true);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");  
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -866,6 +807,84 @@ void PrefetchNDOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 // XeGPU_UpdateNDOffsetOp
 //===----------------------------------------------------------------------===//
+ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser, OperationState &result) {
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> TensorDescOperands(1);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 4> offsetsOperands;
+  llvm::SmallVector<Type> TensorDescTypes(1);
+  llvm::SmallVector<Type> resultTypes(1);
+  llvm::SMLoc TensorDescOperandsLoc;
+  llvm::SMLoc offsetsOperandsLoc;
+
+  TensorDescOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(TensorDescOperands[0]))
+    return failure();
+  if (parser.parseComma())
+    return failure();
+  
+  // parse offsets, e.g.,  [x, y]
+  if (succeeded(parser.parseOptionalLSquare())) {
+    offsetsOperandsLoc = parser.getCurrentLocation();
+    if (parser.parseOperandList(offsetsOperands))
+      return failure();
+    if (parser.parseRSquare())
+      return failure();
+  }
+
+  if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  auto loc = parser.getCurrentLocation();
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
+    return failure();
+
+  if (parser.parseColon())
+    return failure();
+
+  if (parser.parseType(TensorDescTypes[0]))
+    return failure();
+  if (parser.parseArrow())
+    return failure();
+
+  if (parser.parseType(resultTypes[0]))
+    return failure();
+  result.addTypes(resultTypes);
+  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes, TensorDescOperandsLoc, result.operands))
+    return failure();
+
+  Type indexType = parser.getBuilder().getIndexType();
+  if (parser.resolveOperands(offsetsOperands, indexType, offsetsOperandsLoc, result.operands))
+    return failure();
+  return success();
+}
+
+void UpdateNDOffsetOp::print(OpAsmPrinter &printer) {
+  auto mode = getMode();
+  auto printDefaults = printDefaultValues();
+
+  printer << ' ';
+  printer << getTensorDesc();
+  printer << ",";
+  if (!getOffsets().empty()) {
+    printer << ' ' << "[";
+    printer << getOffsets();
+    printer << "]";
+  }
+
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");  
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+
+  printer << ' ' << ":";
+  printer << ' ';
+  printer << getTensorDesc().getType();
+  printer << ' ' << "->";
+  printer << ' ';
+  printer << getResult().getType();
+}
+
 LogicalResult UpdateNDOffsetOp::verify() {
   // number of offsets specified must match the rank of the tensor descriptor
   if (getTensorDesc().getType().getRank() != (int64_t)getOffsets().size()) {
@@ -903,46 +922,49 @@ void CreateDescOp::build(OpBuilder &builder, OperationState &state,
 }
 
 ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand rawOperands[2];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> operands(rawOperands);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands(2);
+  llvm::SmallVector<Type> Types(2);
   llvm::SMLoc operandsLoc = parser.getCurrentLocation();
   // parse the source operand
-  if (parser.parseOperand(rawOperands[0]))
+  if (parser.parseOperand(Operands[0]))
     return failure();
 
   if (parser.parseComma())
     return failure();
 
   // parse the offset operand
-  if (parser.parseOperand(rawOperands[1]))
+  if (parser.parseOperand(Operands[1]))
     return failure();
 
   // parse the optional attributes 
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  Type rawTypes[2];
-  llvm::ArrayRef<Type> types(rawTypes);
-  if (parser.parseType(rawTypes[0]))
+  if (parser.parseType(Types[0]))
     return failure();
   if (parser.parseComma())
     return failure();
 
-  if (parser.parseType(rawTypes[1]))
+  if (parser.parseType(Types[1]))
     return failure();
   if (parser.parseArrow())
     return failure();
 
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  if (parser.parseType(TensorDescRawTypes[0]))
+  llvm::SmallVector<Type> TensorDescTypes(1);
+  if (parser.parseType(TensorDescTypes[0]))
     return failure();
 
   result.addTypes(TensorDescTypes);
-  if (parser.resolveOperands(operands, types, operandsLoc,
+  if (parser.resolveOperands(Operands, Types, operandsLoc,
                              result.operands))
     return failure();
   return success();
@@ -950,7 +972,6 @@ ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void CreateDescOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  bool printSep = false;
   auto chunk = getChunkSizePerLane();
   auto printDefaults = printDefaultValues();
 
@@ -960,24 +981,14 @@ void CreateDescOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getOffsets();
 
-  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
-    printer << ' ' << "{";
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults) {
+    if (mode == xegpu::ModeKind::SIMT)
+      elidedAttrs.push_back("mode");  
+    if (chunk == 1)
+      elidedAttrs.push_back("chunk_size_per_lane");
   }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << mode;
-    printSep = true;
-  }
-
-  if (printDefaults || chunk != 1) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "chunk_size_per_lane = " << chunk;
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT || chunk != 1) {
-    printer << "}";
-  }
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -1084,70 +1095,58 @@ void LoadGatherOp::build(OpBuilder &builder, OperationState &state, Type value,
 }
 
 ParseResult LoadGatherOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
-  llvm::SMLoc TensorDescOperandsLoc;
-  OpAsmParser::UnresolvedOperand maskRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> maskOperands(maskRawOperands);
-  llvm::SMLoc maskOperandsLoc;
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands(2);
+  llvm::SmallVector<Type> Types(2);
+  llvm::SmallVector<Type> valueTypes(1);
+  llvm::SMLoc OperandsLoc;
 
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-  Type maskRawTypes[1];
-  llvm::ArrayRef<Type> maskTypes(maskRawTypes);
-  Type valueRawTypes[1];
-  llvm::ArrayRef<Type> valueTypes(valueRawTypes);
-
-  TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
+  OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(Operands[0]))
     return failure();
 
   if (parser.parseComma())
     return failure();
 
-  maskOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(maskRawOperands[0]))
+  if (parser.parseOperand(Operands[1]))
     return failure();
 
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure();
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseType(TensorDescRawTypes[0]))
+  if (parser.parseType(Types[0]))
     return failure();
 
   if (parser.parseComma())
     return failure();
 
-  if (parser.parseType(maskRawTypes[0]))
+  if (parser.parseType(Types[1]))
     return failure();
 
   if (parser.parseArrow())
     return failure();
 
-  if (parser.parseType(valueRawTypes[0]))
+  if (parser.parseType(valueTypes[0]))
     return failure();
 
   result.addTypes(valueTypes);
 
-  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
-                             TensorDescOperandsLoc, result.operands))
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
 
-  if (parser.resolveOperands(maskOperands, maskTypes, maskOperandsLoc,
-                             result.operands))
-    return failure();
   return success();
 }
 
 void LoadGatherOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
 
   printer << ' ';
   printer << getTensorDesc();
@@ -1155,35 +1154,10 @@ void LoadGatherOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getMask();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << getMode();
-    printSep = true;
-  }
-
-  if (getVnniAxisAttr()) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "vnni_axis = " << getVnniAxis().value();
-    printSep = true;
-  }
-
-  if (getTransposeAttr()) {
-    if (printSep)
-      printer << "," << ' ';
-    printer << "transpose = ";
-    getTransposeAttr().print(printer);
-    printSep = true;
-  }
-
-  printCacheHintAttrs<LoadGatherOp>(printer, *this, printSep);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");   
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -1317,87 +1291,37 @@ void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
 }
 
 ParseResult StoreScatterOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
-  llvm::SMLoc TensorDescOperandsLoc;
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;
+  llvm::SmallVector<Type> Types;
+  llvm::SMLoc OperandsLoc;
 
-  OpAsmParser::UnresolvedOperand valueRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> valueOperands(
-      valueRawOperands);
-  llvm::SMLoc valueOperandsLoc;
-
-  OpAsmParser::UnresolvedOperand maskRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> maskOperands(maskRawOperands);
-  llvm::SMLoc maskOperandsLoc;
-
-  Type valueRawTypes[1];
-  llvm::ArrayRef<Type> valueTypes(valueRawTypes);
-
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
-
-  Type maskRawTypes[1];
-  llvm::ArrayRef<Type> maskTypes(maskRawTypes);
-
-  valueOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(valueRawOperands[0]))
+  OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperandList(Operands))
     return failure();
 
-  if (parser.parseComma())
-    return failure();
-
-  TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
-    return failure();
-
-  if (parser.parseComma())
-    return failure();
-
-  maskOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(maskRawOperands[0]))
-    return failure();
-
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
+    return failure(); 
+  if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+    })))
     return failure();
 
   if (parser.parseColon())
     return failure();
-
-  if (parser.parseType(valueRawTypes[0]))
+  
+  if (parser.parseTypeList(Types))
     return failure();
 
-  if (parser.parseComma())
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
 
-  if (parser.parseType(TensorDescRawTypes[0]))
-    return failure();
-
-  if (parser.parseComma())
-    return failure();
-
-  if (parser.parseType(maskRawTypes[0]))
-    return failure();
-
-  if (parser.resolveOperands(valueOperands, valueTypes, valueOperandsLoc,
-                             result.operands))
-    return failure();
-
-  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
-                             TensorDescOperandsLoc, result.operands))
-    return failure();
-
-  if (parser.resolveOperands(maskOperands, maskTypes, maskOperandsLoc,
-                             result.operands))
-    return failure();
   return success();
 }
 
 void StoreScatterOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
 
   printer << ' ';
   printer << getValue();
@@ -1408,20 +1332,10 @@ void StoreScatterOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getMask();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << getMode();
-    printSep = true;
-  }
-
-  printCacheHintAttrs<StoreScatterOp>(printer, *this, printSep);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");   
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -1513,15 +1427,12 @@ void PrefetchOp::build(OpBuilder &builder, OperationState &state,
 }
 
 ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand TensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> TensorDescOperands(
-      TensorDescRawOperands);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> TensorDescOperands(1);
+  llvm::SmallVector<Type> TensorDescTypes(1);
   llvm::SMLoc TensorDescOperandsLoc;
-  Type TensorDescRawTypes[1];
-  llvm::ArrayRef<Type> TensorDescTypes(TensorDescRawTypes);
 
   TensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(TensorDescRawOperands[0]))
+  if (parser.parseOperand(TensorDescOperands[0]))
     return failure();
 
   auto loc = parser.getCurrentLocation();
@@ -1532,12 +1443,12 @@ ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
   })))
   return failure();
   
-
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseType(TensorDescRawTypes[0]))
+  if (parser.parseType(TensorDescTypes[0]))
     return failure();
+
   if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
                              TensorDescOperandsLoc, result.operands))
     return failure();
@@ -1546,27 +1457,15 @@ ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void PrefetchOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
-  bool printSep = false;
   auto printDefaults = printDefaultValues();
-  auto numAttrs = (*this)->getAttrs().size();
 
   printer << ' ';
   printer << getTensorDesc();
 
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << ' ' << "{";
-  }
-
-  if (printDefaults || mode != ModeKind::SIMT) {
-    printer << "mode = " << getMode();
-    printSep = true;
-  }
-
-  printCacheHintAttrs<PrefetchOp>(printer, *this, printSep);
-
-  if (printDefaults || mode != ModeKind::SIMT || numAttrs > 1) {
-    printer << "}";
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");   
+  printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
   printer << ' ';
@@ -1621,50 +1520,35 @@ void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state,
 }
 
 ParseResult UpdateOffsetOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand RawOperands[2];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> Operands(RawOperands);  
-
-  Type resultRawTypes[1];
-  llvm::ArrayRef<Type> resultTypes(resultRawTypes);
-
-  Type RawTypes[2];
-  llvm::ArrayRef<Type> Types(Types);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<Type> Types;
 
   auto OperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(RawOperands[0]))
-    return failure();
-  if (parser.parseComma())
-    return failure();
-
-  if (parser.parseOperand(RawOperands[1]))
+  if (parser.parseOperandList(Operands))
     return failure();
  
-  auto AttrLoc = parser.getCurrentLocation();
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
-
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(AttrLoc) << "'" << result.name.getStringRef() << "' op ";
+      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
     })))
     return failure();
   
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseType(RawTypes[0]))
+  if (parser.parseTypeList(Types))
     return failure();
 
-  if (parser.parseComma())
-    return failure();
-
-  if (parser.parseType(RawTypes[1]))
-    return failure();
   if (parser.parseArrow())
     return failure();
 
-  if (parser.parseType(resultRawTypes[0]))
+  llvm::SmallVector<Type> resultTypes(1);
+  if (parser.parseType(resultTypes[0]))
     return failure();
   result.addTypes(resultTypes);
+
   if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
   return success();
@@ -1680,11 +1564,9 @@ void UpdateOffsetOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getOffsets();
 
-  llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
-  if (!printDefaults) {
-    if (mode == ModeKind::SIMT) 
-      elidedAttrs.push_back("mode");
-  }
+  llvm::SmallVector<llvm::StringRef> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode"); 
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   printer << ' ' << ":";
   printer << ' ';
@@ -1729,49 +1611,16 @@ LogicalResult UpdateOffsetOp::verify() {
 // XeGPU_DpasOp
 //===----------------------------------------------------------------------===//
 ParseResult DpasOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand lhsRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> lhsOperands(lhsRawOperands);  
-  llvm::SMLoc lhsOperandsLoc;
-  OpAsmParser::UnresolvedOperand rhsRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> rhsOperands(rhsRawOperands);  
-  llvm::SMLoc rhsOperandsLoc;
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 4> accOperands;
-  llvm::SMLoc accOperandsLoc;
-  Type lhsRawTypes[1];
-  llvm::ArrayRef<Type> lhsTypes(lhsRawTypes);
-  Type rhsRawTypes[1];
-  llvm::ArrayRef<Type> rhsTypes(rhsRawTypes);
-  llvm::SmallVector<Type, 1> accTypes;
-  Type resultRawTypes[1];
-  llvm::ArrayRef<Type> resultTypes(resultRawTypes);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<Type> Types;
 
-  lhsOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(lhsRawOperands[0]))
+  llvm::SMLoc OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperandList(Operands))
     return failure();
-
-  if (parser.parseComma())
-    return failure();
-
-  rhsOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(rhsRawOperands[0]))
-    return failure();
-
-  // parse optional acc operand
-  if (succeeded(parser.parseOptionalComma())) {
-    accOperandsLoc = parser.getCurrentLocation();
-    OpAsmParser::UnresolvedOperand operand;
-    OptionalParseResult parseResult = parser.parseOptionalOperand(operand);
-    if (parseResult.has_value()) {
-      if (failed(*parseResult))
-        return failure();
-      accOperands.push_back(operand);
-    } 
-  }
 
   auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
-
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
       return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
     })))
@@ -1780,39 +1629,20 @@ ParseResult DpasOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseType(lhsRawTypes[0]))
+  if (parser.parseTypeList(Types))
     return failure();
-
-  if (parser.parseComma())
-    return failure();
-
-  if (parser.parseType(rhsRawTypes[0]))
-    return failure();
-
-  // parse type for optional acc
-  if (succeeded(parser.parseOptionalComma())) {
-    Type optionalType;
-    OptionalParseResult parseResult = parser.parseOptionalType(optionalType);
-    if (parseResult.has_value()) {
-      if (failed(*parseResult))
-        return failure();
-      accTypes.push_back(optionalType);
-    }
-  
-  }
 
   if (parser.parseArrow())
     return failure();
 
-  if (parser.parseType(resultRawTypes[0]))
+  llvm::SmallVector<Type> resultTypes(1);
+  if (parser.parseType(resultTypes[0]))
     return failure();
   result.addTypes(resultTypes);
-  if (parser.resolveOperands(lhsOperands, lhsTypes, lhsOperandsLoc, result.operands))
+
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
-  if (parser.resolveOperands(rhsOperands, rhsTypes, rhsOperandsLoc, result.operands))
-    return failure();
-  if (parser.resolveOperands(accOperands, accTypes, accOperandsLoc, result.operands))
-    return failure();
+
   return success();
 }
 
@@ -1829,10 +1659,8 @@ void DpasOp::print(OpAsmPrinter &printer) {
     printer << ", " << value;
   
   llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
-  if (!printDefaults) {
-    if (mode == ModeKind::SIMT)
-      elidedAttrs.push_back("mode");
-  }
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");
 
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   printer << ' ' << ":";
@@ -1857,19 +1685,16 @@ LogicalResult DpasOp::verify() {
   Type lhsElemType = getLhsType().getElementType();
   Type rhsElemType = getRhsType().getElementType();
 
-  if (lhsElemType != rhsElemType) {
-    return emitOpError("lhs and rhs element type does not match for dpas op");
-  }
+  if (lhsElemType != rhsElemType) 
+    return emitOpError("lhs and rhs element type does not match for dpas op"); 
 
-  if (getAcc() && getAccType() != getResultType()) {
+  if (getAcc() && getAccType() != getResultType())
     return emitOpError("Accumulator and Result for dpas op should have the "
-                       "same type (both shape and element type).");
-  }
+                       "same type (both shape and element type)."); 
 
-  if (lhsRank != rhsRank || lhsRank != 3) {
+  if (lhsRank != rhsRank || lhsRank != 3)
     return emitOpError(
         "lhs and rhs rank does not match for dpas op, or their rank is not 3.");
-  }
 
   return success();
 }
@@ -1928,49 +1753,25 @@ void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
 }
 
 ParseResult AtomicRMWOp::parse(OpAsmParser &parser, OperationState &result) {
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<Type, 1> Types;
+  llvm::SMLoc OperandsLoc;
+  
+  llvm::SmallVector<Type> resultTypes(1);
+
   xegpu::AtomicRMWKindAttr kindAttr;
-  OpAsmParser::UnresolvedOperand tensorDescRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> tensorDescOperands(tensorDescRawOperands);  
-  llvm::SMLoc tensorDescOperandsLoc;
-  OpAsmParser::UnresolvedOperand maskRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> maskOperands(maskRawOperands);  llvm::SMLoc maskOperandsLoc;
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 4> valueOperands;
-  llvm::SMLoc valueOperandsLoc;
-  xegpu::ModeKindAttr modeAttr;
-  llvm::SmallVector<Type, 1> allOperandTypes;
-  Type resultRawTypes[1];
-  llvm::ArrayRef<Type> resultTypes(resultRawTypes);
-
-  if (parser.parseCustomAttributeWithFallback(kindAttr, Type{})) {
+  if (parser.parseCustomAttributeWithFallback(kindAttr, Type{}))
     return failure();
-  }
-  if (kindAttr) result.getOrAddProperties<AtomicRMWOp::Properties>().kind = kindAttr;
+  if (kindAttr) 
+    result.getOrAddProperties<AtomicRMWOp::Properties>().kind = kindAttr;
 
-  tensorDescOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(tensorDescRawOperands[0]))
-    return failure();
-  if (parser.parseComma())
+  OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperandList(Operands))
     return failure();
 
-  maskOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(maskRawOperands[0]))
-    return failure();
-
-  if (succeeded(parser.parseOptionalComma())) {
-    valueOperandsLoc = parser.getCurrentLocation();
-    OpAsmParser::UnresolvedOperand operand;
-    OptionalParseResult parseResult = parser.parseOptionalOperand(operand);
-    if (parseResult.has_value()) {
-      if (failed(*parseResult))
-        return failure();
-      valueOperands.push_back(operand);
-    } 
-  }
-
-  auto loc = parser.getCurrentLocation();(void)loc;
+  auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
-
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
       return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
     })))
@@ -1979,18 +1780,17 @@ ParseResult AtomicRMWOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseColon())
     return failure();
 
-  if (parser.parseTypeList(allOperandTypes))
+  if (parser.parseTypeList(Types))
     return failure();
+
   if (parser.parseArrow())
     return failure();
   
-  Type type;
-  if (parser.parseCustomTypeWithFallback(type))
-    return failure();
-  resultRawTypes[0] = type;
-  
+  if (parser.parseCustomTypeWithFallback(resultTypes[0]))
+    return failure(); 
   result.addTypes(resultTypes);
-  if (parser.resolveOperands(llvm::concat<const OpAsmParser::UnresolvedOperand>(tensorDescOperands, maskOperands, valueOperands), allOperandTypes, parser.getNameLoc(), result.operands))
+
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
   return success();
 }
@@ -1999,7 +1799,6 @@ void AtomicRMWOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
   auto printDefaults = printDefaultValues();
 
-  printer << ' ';
   printer.printStrippedAttrOrType(getKindAttr());
   printer << ' ';
   printer << getTensorDesc();
@@ -2010,24 +1809,17 @@ void AtomicRMWOp::print(OpAsmPrinter &printer) {
     printer << ", " << value;
   
   llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
-  if (!printDefaults) {
-    if (mode == ModeKind::SIMT)
-      elidedAttrs.push_back("mode");
-  }
+  elidedAttrs.push_back("kind");
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");
 
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   printer << ' ' << ":";
   printer << ' ';
   printer << getOperation()->getOperandTypes();
   printer << ' ' << "->";
-  printer << ' ';
-  
-  auto type = getResult().getType();
-  if (auto validType = llvm::dyn_cast<Type>(type))
-    printer.printStrippedAttrOrType(validType);
-  else
-    printer << type;
-  
+  printer << ' ';  
+  printer << getResult().getType();
 }
 
 LogicalResult AtomicRMWOp::verify() {
@@ -2041,29 +1833,14 @@ LogicalResult AtomicRMWOp::verify() {
 // XeGPU_CreateNbarrierOp
 //===----------------------------------------------------------------------===//
 ParseResult CreateNbarrierOp::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand nbarrier_idRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> nbarrier_idOperands(nbarrier_idRawOperands);  
-  llvm::SMLoc nbarrier_idOperandsLoc;
-  OpAsmParser::UnresolvedOperand nbarrier_roleRawOperands[1];
-  llvm::ArrayRef<OpAsmParser::UnresolvedOperand> nbarrier_roleOperands(nbarrier_roleRawOperands);  
-  llvm::SMLoc nbarrier_roleOperandsLoc;
-  Type nbarrier_idRawTypes[1];
-  llvm::ArrayRef<Type> nbarrier_idTypes(nbarrier_idRawTypes);
-  Type nbarrier_roleRawTypes[1];
-  llvm::ArrayRef<Type> nbarrier_roleTypes(nbarrier_roleRawTypes);
-  Type resultRawTypes[1];
-  llvm::ArrayRef<Type> resultTypes(resultRawTypes);
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 2> Operands;  
+  llvm::SmallVector<Type> Types;
+  llvm::SMLoc OperandsLoc;
 
-  nbarrier_idOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(nbarrier_idRawOperands[0]))
-    return failure();
-  if (parser.parseComma())
+  OperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperandList(Operands))
     return failure();
 
-  nbarrier_roleOperandsLoc = parser.getCurrentLocation();
-  if (parser.parseOperand(nbarrier_roleRawOperands[0]))
-    return failure();
-  
   auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
@@ -2075,27 +1852,25 @@ ParseResult CreateNbarrierOp::parse(OpAsmParser &parser, OperationState &result)
   
   if (parser.parseColon())
     return failure();
+
   if (parser.parseLParen())
     return failure();
 
-  if (parser.parseType(nbarrier_idRawTypes[0]))
-    return failure();
-  if (parser.parseComma())
+  if (parser.parseTypeList(Types))
     return failure();
 
-  if (parser.parseType(nbarrier_roleRawTypes[0]))
-    return failure();
   if (parser.parseRParen())
     return failure();
+
   if (parser.parseArrow())
     return failure();
 
-  if (parser.parseType(resultRawTypes[0]))
+  llvm::SmallVector<Type> resultTypes(1);
+  if (parser.parseType(resultTypes[0]))
     return failure();
+
   result.addTypes(resultTypes);
-  if (parser.resolveOperands(nbarrier_idOperands, nbarrier_idTypes, nbarrier_idOperandsLoc, result.operands))
-    return failure();
-  if (parser.resolveOperands(nbarrier_roleOperands, nbarrier_roleTypes, nbarrier_roleOperandsLoc, result.operands))
+  if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
     return failure();
   return success();
 }
@@ -2103,18 +1878,15 @@ ParseResult CreateNbarrierOp::parse(OpAsmParser &parser, OperationState &result)
 void CreateNbarrierOp::print(OpAsmPrinter &printer) {
   auto mode = getMode();
   auto printDefaults = printDefaultValues();
+  llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
+  if (!printDefaults && mode == xegpu::ModeKind::SIMT)
+    elidedAttrs.push_back("mode");
 
   printer << ' ';
   printer << getNbarrierId();
   printer << ",";
   printer << ' ';
   printer << getNbarrierRole();
-  llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
-  if (!printDefaults) {
-    if (mode == ModeKind::SIMT)
-      elidedAttrs.push_back("mode");
-  }
-
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   printer << ' ' << ":";
   printer << ' ' << "(";
@@ -2127,8 +1899,6 @@ void CreateNbarrierOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getResult().getType();
 }
-
-
 
 } // namespace xegpu
 } // namespace mlir
