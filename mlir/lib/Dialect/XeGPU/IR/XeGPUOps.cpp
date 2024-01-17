@@ -130,7 +130,7 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
       CacheKindAttr attr;
       return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
     } else if (nameId == "transpose") {
-      // in form of [4, 5]
+      // in form of [4, 5], acctually it is a copy of DenseI63ArrayAttr::parse()
       if (succeeded(parser.parseOptionalLSquare())) { 
         Attribute attr;
         // handle empty list case
