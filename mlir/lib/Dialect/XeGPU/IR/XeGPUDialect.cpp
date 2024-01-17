@@ -156,7 +156,8 @@ mlir::Attribute TensorDescAttr::parse(mlir::AsmParser &parser,
   if (parser.parseGreater())
     return {};
   return TensorDescAttr::get(
-      parser.getContext(), memory_scope.value_or(xegpu::MemoryScopeKind::GLOBAL),
+      parser.getContext(),
+      memory_scope.value_or(xegpu::MemoryScopeKind::GLOBAL),
       array_length.value_or(1), boundary_check.value_or(true),
       scattered.value_or(xegpu::ScatteredAttr()),
       map.value_or(xegpu::SubGroupMapAttr()));
@@ -285,12 +286,12 @@ void TensorDescType::print(::mlir::AsmPrinter &printer) const {
   if (printDefaultValues()) {
     auto encoding = getEncoding();
     if (auto attr = getEncodingAsMapAttr()) {
-      encoding =
-          TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1, {}, attr);
+      encoding = TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1,
+                                     {}, attr);
     }
     if (auto attr = getEncodingAsScatteredAttr()) {
-      encoding =
-          TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1, attr, {});
+      encoding = TensorDescAttr::get(getContext(), MemoryScopeKind::GLOBAL, 1,
+                                     attr, {});
     }
     printer << ", " << encoding;
   } else if (auto encoding = getEncodingAsTensorDescAttr()) {

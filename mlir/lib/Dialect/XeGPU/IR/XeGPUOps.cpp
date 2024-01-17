@@ -88,7 +88,8 @@ static bool verifyAndInferShape(std::vector<int64_t> &shape,
 }
 
 static ParseResult
-parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result) {
+parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser,
+                                     OperationState &result) {
   // no optional attributes, return success
   if (failed(parser.parseOptionalLBrace()))
     return success();
@@ -96,19 +97,20 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
   llvm::SmallDenseSet<StringRef, 8> seenKeys;
   auto parseElt = [&]() -> ParseResult {
     // The name of an attribute can either be a keyword, or a string.
-    // as compared to mlir::parseOptionalAttrList, the cases of using 
+    // as compared to mlir::parseOptionalAttrList, the cases of using
     // TOken::bare_identifier and Token::inttype as key maybe not handlered
     std::string nameId;
     auto loc = parser.getCurrentLocation();
     if (parser.parseOptionalKeywordOrString(&nameId))
-      return parser.emitError(loc, "invalid attribute name: ") << nameId << ".\n";
+      return parser.emitError(loc, "invalid attribute name: ")
+             << nameId << ".\n";
 
     if (nameId.empty())
       return parser.emitError(loc, "expected valid attribute name");
 
     if (!seenKeys.insert(nameId).second)
-      return parser.emitError(loc, "duplicate key '") 
-              << nameId << "' in dictionary attribute.";
+      return parser.emitError(loc, "duplicate key '")
+             << nameId << "' in dictionary attribute.";
 
     // Lazy load a dialect in the context if there is a possible namespace.
     auto splitName = StringRef(nameId).split('.');
@@ -125,25 +127,29 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
     // for xegpu specific attributes
     if (nameId == "mode") {
       ModeKindAttr attr;
-      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
-    } else if (nameId == "l1_hint" || nameId == "l2_hint" || nameId == "l3_hint") {
+      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId,
+                                                     result.attributes);
+    } else if (nameId == "l1_hint" || nameId == "l2_hint" ||
+               nameId == "l3_hint") {
       CacheKindAttr attr;
-      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId, result.attributes);
+      return parser.parseCustomAttributeWithFallback(attr, Type{}, nameId,
+                                                     result.attributes);
     } else if (nameId == "transpose") {
       // in form of [4, 5], acctually it is a copy of DenseI63ArrayAttr::parse()
-      if (succeeded(parser.parseOptionalLSquare())) { 
+      if (succeeded(parser.parseOptionalLSquare())) {
         Attribute attr;
         // handle empty list case
         if (succeeded(parser.parseOptionalRSquare())) {
           attr = DenseI64ArrayAttr::get(parser.getContext(), {});
         } else {
           attr = DenseI64ArrayAttr::parseWithoutBraces(parser, Type{});
-          if (failed(parser.parseRSquare())) 
-            return failure(); 
+          if (failed(parser.parseRSquare()))
+            return failure();
         }
-        if (!attr) return failure(); 
+        if (!attr)
+          return failure();
         result.addAttribute(nameId, attr);
-        return success(); 
+        return success();
       } else {
         // in form of array<i64: 4, 5>
         DenseI64ArrayAttr attr;
@@ -167,7 +173,8 @@ parseOptionalAttrDictWithCustomAttrs(OpAsmParser &parser, OperationState &result
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type TensorDesc, Value source, ValueRange offsets,
                            ValueRange shape, ValueRange strides,
-                           llvm::ArrayRef<int64_t> static_offsets, ModeKind mode) {
+                           llvm::ArrayRef<int64_t> static_offsets,
+                           ModeKind mode) {
   auto offsetRank = static_offsets.size();
   auto shapeRank = shape.size() ? shape.size() : getRankOf(source);
 
@@ -199,7 +206,8 @@ void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
 
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type tdesc, Value source,
-                           llvm::ArrayRef<OpFoldResult> offsets, ModeKind mode) {
+                           llvm::ArrayRef<OpFoldResult> offsets,
+                           ModeKind mode) {
   auto ty = llvm::dyn_cast_if_present<MemRefType>(source.getType());
   assert(ty && ty.hasStaticShape() && offsets.size() == getRankOf(source));
 
@@ -216,8 +224,7 @@ void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
 void CreateNdDescOp::build(OpBuilder &builder, OperationState &state,
                            Type tdesc, Value source,
                            llvm::ArrayRef<OpFoldResult> offsets,
-                           ValueRange shape, ValueRange stride,
-                           ModeKind mode) {
+                           ValueRange shape, ValueRange stride, ModeKind mode) {
   assert(shape.size() && offsets.size() && stride.size() &&
          shape.size() == stride.size() && shape.size() == offsets.size());
 
@@ -281,8 +288,9 @@ ParseResult CreateNdDescOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -349,7 +357,7 @@ void CreateNdDescOp::print(OpAsmPrinter &printer) {
   elidedAttrs.push_back("operandSegmentSizes");
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
     elidedAttrs.push_back("mode");
-  
+
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -449,7 +457,7 @@ llvm::SmallVector<OpFoldResult> CreateNdDescOp::getShape() {
     return shape;
   }
 
-  llvm_unreachable("Unexpected error in CreateNdDescOp. " 
+  llvm_unreachable("Unexpected error in CreateNdDescOp. "
                    "The shape information is missing.\n");
 }
 
@@ -496,7 +504,6 @@ llvm::ArrayRef<int64_t> CreateNdDescOp::getTensorDescShape() {
   return getTensorDescType().getShape();
 }
 
-
 //===----------------------------------------------------------------------===//
 // XeGPU_LoadNDOp
 //===----------------------------------------------------------------------===//
@@ -512,8 +519,9 @@ ParseResult LoadNDOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -547,7 +555,7 @@ void LoadNDOp::print(OpAsmPrinter &printer) {
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
     elidedAttrs.push_back("mode");
-  
+
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -659,8 +667,9 @@ ParseResult StoreNDOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -688,7 +697,7 @@ void StoreNDOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");  
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -772,8 +781,9 @@ ParseResult PrefetchNDOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -796,7 +806,7 @@ void PrefetchNDOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");  
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -807,7 +817,8 @@ void PrefetchNDOp::print(OpAsmPrinter &printer) {
 //===----------------------------------------------------------------------===//
 // XeGPU_UpdateNDOffsetOp
 //===----------------------------------------------------------------------===//
-ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser, OperationState &result) {
+ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser,
+                                    OperationState &result) {
   llvm::SmallVector<OpAsmParser::UnresolvedOperand> TensorDescOperands(1);
   llvm::SmallVector<OpAsmParser::UnresolvedOperand, 4> offsetsOperands;
   llvm::SmallVector<Type> TensorDescTypes(1);
@@ -820,7 +831,7 @@ ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser, OperationState &result)
     return failure();
   if (parser.parseComma())
     return failure();
-  
+
   // parse offsets, e.g.,  [x, y]
   if (succeeded(parser.parseOptionalLSquare())) {
     offsetsOperandsLoc = parser.getCurrentLocation();
@@ -835,8 +846,9 @@ ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser, OperationState &result)
 
   auto loc = parser.getCurrentLocation();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -850,11 +862,13 @@ ParseResult UpdateNDOffsetOp::parse(OpAsmParser &parser, OperationState &result)
   if (parser.parseType(resultTypes[0]))
     return failure();
   result.addTypes(resultTypes);
-  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes, TensorDescOperandsLoc, result.operands))
+  if (parser.resolveOperands(TensorDescOperands, TensorDescTypes,
+                             TensorDescOperandsLoc, result.operands))
     return failure();
 
   Type indexType = parser.getBuilder().getIndexType();
-  if (parser.resolveOperands(offsetsOperands, indexType, offsetsOperandsLoc, result.operands))
+  if (parser.resolveOperands(offsetsOperands, indexType, offsetsOperandsLoc,
+                             result.operands))
     return failure();
   return success();
 }
@@ -874,7 +888,7 @@ void UpdateNDOffsetOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");  
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -936,14 +950,15 @@ ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseOperand(Operands[1]))
     return failure();
 
-  // parse the optional attributes 
+  // parse the optional attributes
   auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -964,8 +979,7 @@ ParseResult CreateDescOp::parse(OpAsmParser &parser, OperationState &result) {
     return failure();
 
   result.addTypes(TensorDescTypes);
-  if (parser.resolveOperands(Operands, Types, operandsLoc,
-                             result.operands))
+  if (parser.resolveOperands(Operands, Types, operandsLoc, result.operands))
     return failure();
   return success();
 }
@@ -984,7 +998,7 @@ void CreateDescOp::print(OpAsmPrinter &printer) {
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults) {
     if (mode == xegpu::ModeKind::SIMT)
-      elidedAttrs.push_back("mode");  
+      elidedAttrs.push_back("mode");
     if (chunk == 1)
       elidedAttrs.push_back("chunk_size_per_lane");
   }
@@ -1114,8 +1128,9 @@ ParseResult LoadGatherOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
@@ -1156,7 +1171,7 @@ void LoadGatherOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");   
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -1224,9 +1239,9 @@ LogicalResult LoadGatherOp::verify() {
   if (getTransposeAttr()) {
     auto trans = getTranspose().value();
     if (tdescShape.size() < trans.size())
-      return emitWarning("Invalid transpose attr. It is ignored."); 
+      return emitWarning("Invalid transpose attr. It is ignored.");
     transpose(trans, tdescShape);
-  } 
+  }
 
   if (getVnniAxis()) {
     auto axis = getVnniAxis().value();
@@ -1249,23 +1264,21 @@ LogicalResult LoadGatherOp::verify() {
   return success();
 }
 
-
 //===----------------------------------------------------------------------===//
 // XeGPU_StoreScatterOp
 //===----------------------------------------------------------------------===//
 void StoreScatterOp::build(OpBuilder &builder, OperationState &state,
                            Value value, Value TensorDesc, Value mask,
-                           CacheKindAttr l1_hint,
-                           CacheKindAttr l2_hint,
+                           CacheKindAttr l1_hint, CacheKindAttr l2_hint,
                            CacheKindAttr l3_hint) {
   state.addOperands(value);
   state.addOperands(TensorDesc);
   state.addOperands(mask);
-  if (l1_hint) 
+  if (l1_hint)
     state.getOrAddProperties<Properties>().l1_hint = l1_hint;
-  if (l2_hint) 
+  if (l2_hint)
     state.getOrAddProperties<Properties>().l2_hint = l2_hint;
-  if (l3_hint) 
+  if (l3_hint)
     state.getOrAddProperties<Properties>().l3_hint = l3_hint;
   state.getOrAddProperties<Properties>().mode =
       ModeKindAttr::get(builder.getContext(), ModeKind::VC);
@@ -1301,15 +1314,16 @@ ParseResult StoreScatterOp::parse(OpAsmParser &parser, OperationState &result) {
 
   auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
-    return failure(); 
+    return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
 
   if (parser.parseColon())
     return failure();
-  
+
   if (parser.parseTypeList(Types))
     return failure();
 
@@ -1334,7 +1348,7 @@ void StoreScatterOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");   
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -1413,8 +1427,8 @@ void PrefetchOp::build(OpBuilder &builder, OperationState &state,
 }
 
 void PrefetchOp::build(OpBuilder &builder, OperationState &state,
-                       Value TensorDesc, CacheKind l1_hint,
-                       CacheKind l2_hint, CacheKind l3_hint) {
+                       Value TensorDesc, CacheKind l1_hint, CacheKind l2_hint,
+                       CacheKind l3_hint) {
   state.addOperands(TensorDesc);
   state.getOrAddProperties<Properties>().l1_hint =
       CacheKindAttr::get(builder.getContext(), l1_hint);
@@ -1439,10 +1453,11 @@ ParseResult PrefetchOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-    return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-  })))
-  return failure();
-  
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
+    return failure();
+
   if (parser.parseColon())
     return failure();
 
@@ -1464,7 +1479,7 @@ void PrefetchOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode");   
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
 
   printer << ' ' << ":";
@@ -1478,21 +1493,20 @@ LogicalResult PrefetchOp::verify() {
   auto mapping = tdescTy.getMapping();
 
   auto isValidHint = [&](CacheKindAttr attr) -> bool {
-    if (!attr) return true;
+    if (!attr)
+      return true;
     auto kind = attr.getValue();
-    return kind == CacheKind::CACHED ||
-           kind == CacheKind::UNCACHED ||
-           kind == CacheKind::STREAMING ||
-           kind == CacheKind::READ_INVALIDATE;
+    return kind == CacheKind::CACHED || kind == CacheKind::UNCACHED ||
+           kind == CacheKind::STREAMING || kind == CacheKind::READ_INVALIDATE;
   };
 
-  if (!isValidHint(getL1HintAttr())) 
+  if (!isValidHint(getL1HintAttr()))
     return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
-  if (!isValidHint(getL2HintAttr())) 
+  if (!isValidHint(getL2HintAttr()))
     return emitOpError("invlid l2_hint: ") << getL2HintAttr();
 
-  if (!isValidHint(getL3HintAttr())) 
+  if (!isValidHint(getL3HintAttr()))
     return emitOpError("invlid l3_hint: ") << getL3HintAttr();
 
   if (!tdescTy.getScattered())
@@ -1510,31 +1524,32 @@ LogicalResult PrefetchOp::verify() {
 //===----------------------------------------------------------------------===//
 // XeGPU_UpdateOffsetOp
 //===----------------------------------------------------------------------===//
-void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state, 
+void UpdateOffsetOp::build(OpBuilder &builder, OperationState &state,
                            Type result, Value TensorDesc, Value offsets) {
   state.addOperands(TensorDesc);
   state.addOperands(offsets);
-  state.getOrAddProperties<Properties>().mode = 
-            xegpu::ModeKindAttr::get(builder.getContext(), xegpu::ModeKind::VC);
-  state.addTypes(result);  
+  state.getOrAddProperties<Properties>().mode =
+      xegpu::ModeKindAttr::get(builder.getContext(), xegpu::ModeKind::VC);
+  state.addTypes(result);
 }
 
 ParseResult UpdateOffsetOp::parse(OpAsmParser &parser, OperationState &result) {
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;
   llvm::SmallVector<Type> Types;
 
   auto OperandsLoc = parser.getCurrentLocation();
   if (parser.parseOperandList(Operands))
     return failure();
- 
+
   auto loc = parser.getCurrentLocation();
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
-  
+
   if (parser.parseColon())
     return failure();
 
@@ -1555,7 +1570,7 @@ ParseResult UpdateOffsetOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void UpdateOffsetOp::print(OpAsmPrinter &printer) {
-  auto mode =getMode();
+  auto mode = getMode();
   auto printDefaults = printDefaultValues();
 
   printer << ' ';
@@ -1566,7 +1581,7 @@ void UpdateOffsetOp::print(OpAsmPrinter &printer) {
 
   llvm::SmallVector<llvm::StringRef> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
-    elidedAttrs.push_back("mode"); 
+    elidedAttrs.push_back("mode");
   printer.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   printer << ' ' << ":";
   printer << ' ';
@@ -1581,7 +1596,7 @@ void UpdateOffsetOp::print(OpAsmPrinter &printer) {
 
 LogicalResult UpdateOffsetOp::verify() {
   auto mode = getMode();
-  if (mode != ModeKind::VC) 
+  if (mode != ModeKind::VC)
     return emitOpError("UpdateOffsetOp only work on VC mode.\n");
 
   auto srcTy = getTensorDesc().getType();
@@ -1611,7 +1626,7 @@ LogicalResult UpdateOffsetOp::verify() {
 // XeGPU_DpasOp
 //===----------------------------------------------------------------------===//
 ParseResult DpasOp::parse(OpAsmParser &parser, OperationState &result) {
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;
   llvm::SmallVector<Type> Types;
 
   llvm::SMLoc OperandsLoc = parser.getCurrentLocation();
@@ -1622,10 +1637,11 @@ ParseResult DpasOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
-  
+
   if (parser.parseColon())
     return failure();
 
@@ -1655,9 +1671,9 @@ void DpasOp::print(OpAsmPrinter &printer) {
   printer << ",";
   printer << ' ';
   printer << getRhs();
-  if (Value value = getAcc()) 
+  if (Value value = getAcc())
     printer << ", " << value;
-  
+
   llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
     elidedAttrs.push_back("mode");
@@ -1685,12 +1701,12 @@ LogicalResult DpasOp::verify() {
   Type lhsElemType = getLhsType().getElementType();
   Type rhsElemType = getRhsType().getElementType();
 
-  if (lhsElemType != rhsElemType) 
-    return emitOpError("lhs and rhs element type does not match for dpas op"); 
+  if (lhsElemType != rhsElemType)
+    return emitOpError("lhs and rhs element type does not match for dpas op");
 
   if (getAcc() && getAccType() != getResultType())
     return emitOpError("Accumulator and Result for dpas op should have the "
-                       "same type (both shape and element type)."); 
+                       "same type (both shape and element type).");
 
   if (lhsRank != rhsRank || lhsRank != 3)
     return emitOpError(
@@ -1720,15 +1736,16 @@ void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
 void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
                          llvm::StringRef callee, TypeRange results,
                          ArgTypeKindAttr argType, ValueRange operands) {
-  build(builder, state, StringAttr::get(builder.getContext(), callee), 
-        results, argType, operands);
+  build(builder, state, StringAttr::get(builder.getContext(), callee), results,
+        argType, operands);
 }
 
 //===----------------------------------------------------------------------===//
 // XeGPU_AtomicRMWOp
 //===----------------------------------------------------------------------===//
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
-                        AtomicRMWKindAttr kind, Value tensorDesc, Value mask, Value value) {
+                        AtomicRMWKindAttr kind, Value tensorDesc, Value mask,
+                        Value value) {
   state.addOperands(tensorDesc);
   state.addOperands(mask);
   if (value)
@@ -1740,7 +1757,8 @@ void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
 }
 
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
-                        AtomicRMWKind kind, Value tensorDesc, Value mask, Value value) {
+                        AtomicRMWKind kind, Value tensorDesc, Value mask,
+                        Value value) {
   state.addOperands(tensorDesc);
   state.addOperands(mask);
   if (value)
@@ -1753,16 +1771,16 @@ void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,
 }
 
 ParseResult AtomicRMWOp::parse(OpAsmParser &parser, OperationState &result) {
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;  
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand> Operands;
   llvm::SmallVector<Type, 1> Types;
   llvm::SMLoc OperandsLoc;
-  
+
   llvm::SmallVector<Type> resultTypes(1);
 
   xegpu::AtomicRMWKindAttr kindAttr;
   if (parser.parseCustomAttributeWithFallback(kindAttr, Type{}))
     return failure();
-  if (kindAttr) 
+  if (kindAttr)
     result.getOrAddProperties<AtomicRMWOp::Properties>().kind = kindAttr;
 
   OperandsLoc = parser.getCurrentLocation();
@@ -1773,10 +1791,11 @@ ParseResult AtomicRMWOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parseOptionalAttrDictWithCustomAttrs(parser, result))
     return failure();
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
-  
+
   if (parser.parseColon())
     return failure();
 
@@ -1785,9 +1804,9 @@ ParseResult AtomicRMWOp::parse(OpAsmParser &parser, OperationState &result) {
 
   if (parser.parseArrow())
     return failure();
-  
+
   if (parser.parseCustomTypeWithFallback(resultTypes[0]))
-    return failure(); 
+    return failure();
   result.addTypes(resultTypes);
 
   if (parser.resolveOperands(Operands, Types, OperandsLoc, result.operands))
@@ -1805,9 +1824,9 @@ void AtomicRMWOp::print(OpAsmPrinter &printer) {
   printer << ",";
   printer << ' ';
   printer << getMask();
-  if (Value value = getValue()) 
+  if (Value value = getValue())
     printer << ", " << value;
-  
+
   llvm::SmallVector<llvm::StringRef, 2> elidedAttrs;
   elidedAttrs.push_back("kind");
   if (!printDefaults && mode == xegpu::ModeKind::SIMT)
@@ -1818,13 +1837,13 @@ void AtomicRMWOp::print(OpAsmPrinter &printer) {
   printer << ' ';
   printer << getOperation()->getOperandTypes();
   printer << ' ' << "->";
-  printer << ' ';  
+  printer << ' ';
   printer << getResult().getType();
 }
 
 LogicalResult AtomicRMWOp::verify() {
   auto mode = getMode();
-  if (mode != ModeKind::VC) 
+  if (mode != ModeKind::VC)
     return emitOpError("AtomicRMWOp only work on VC mode.\n");
   return success();
 }
@@ -1832,8 +1851,9 @@ LogicalResult AtomicRMWOp::verify() {
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateNbarrierOp
 //===----------------------------------------------------------------------===//
-ParseResult CreateNbarrierOp::parse(OpAsmParser &parser, OperationState &result) {
-  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 2> Operands;  
+ParseResult CreateNbarrierOp::parse(OpAsmParser &parser,
+                                    OperationState &result) {
+  llvm::SmallVector<OpAsmParser::UnresolvedOperand, 2> Operands;
   llvm::SmallVector<Type> Types;
   llvm::SMLoc OperandsLoc;
 
@@ -1846,10 +1866,11 @@ ParseResult CreateNbarrierOp::parse(OpAsmParser &parser, OperationState &result)
     return failure();
 
   if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
-      return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
-    })))
+        return parser.emitError(loc)
+               << "'" << result.name.getStringRef() << "' op ";
+      })))
     return failure();
-  
+
   if (parser.parseColon())
     return failure();
 
