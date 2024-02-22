@@ -34,11 +34,6 @@ def XeGPU_Dialect : Dialect {
       the lower-level GPU compiler.
     }];
 
-    let dependentDialects = [
-      "arith::ArithDialect",
-      "memref::MemRefDialect"
-    ];
-
     let useDefaultTypePrinterParser = true;
     let useDefaultAttributePrinterParser = true;
 }

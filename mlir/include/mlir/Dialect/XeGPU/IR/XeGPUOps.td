@@ -413,28 +413,6 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
   let hasVerifier = 1;
 }
 
-def XeGPU_InvokeSIMDOp : XeGPU_Op<"invoke_SIMD", []> {
-    let summary = "Invoke_SIMD operation";
-    let description = [{
-      The `xegpu.invoke_SIMD` operation works similar to a direct call to a function. 
-      But it is special to Intel GPU.
-    }];
-
-  let arguments = (ins FlatSymbolRefAttr:$callee,
-                       Variadic<AnyType>:$operands,
-                       XeGPU_ArgTypeAttr: $argType);
-  let results = (outs Variadic<AnyType>);
-
-  let builders = [
-    OpBuilder<(ins "SymbolRefAttr":$callee, "TypeRange":$results,
-      "xegpu::ArgTypeKindAttr":$argType, CArg<"ValueRange", "{}">:$operands)>,
-    OpBuilder<(ins "StringAttr":$callee, "TypeRange":$results,
-      "xegpu::ArgTypeKindAttr":$argType, CArg<"ValueRange", "{}">:$operands)>,
-    OpBuilder<(ins "llvm::StringRef":$callee, "TypeRange":$results,
-      "xegpu::ArgTypeKindAttr":$argType, CArg<"ValueRange", "{}">:$operands)>
-  ];
-}
-
 def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
   let summary = "perform ready-modify-write operation that is free from data races.";
   let arguments = (ins

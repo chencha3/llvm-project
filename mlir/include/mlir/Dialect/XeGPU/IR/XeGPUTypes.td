@@ -14,17 +14,14 @@ include "mlir/IR/BuiltinTypes.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUAttrs.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
 
-// An Integer array attribute with fixed 2 elements.
 def XeGPU_IntType: AnyTypeOf<[I1, I8, I16, I32, I64, SI1, SI8, SI16, SI32, SI64, UI1, UI8, UI16, UI32, UI64]>;
 def XeGPU_FloatType: AnyTypeOf<[F16, F32, F64, BF16, TF32]>;
 def XeGPU_ScalarType: AnyTypeOf<[XeGPU_IntType, XeGPU_FloatType]>;
 def XeGPU_BaseAddrType: AnyTypeOf<[MemRefRankOf<[XeGPU_ScalarType], [1, 2]>, UI64, UI32, I64, I32]>;
 def XeGPU_DpasOpType: VectorOfRankAndType<[2, 3], [XeGPU_ScalarType]>;
-// def XeGPU_OffsetType: AnyTypeOf<[VectorOfRankAndType<[1], [Index]>, Index]>;
 def XeGPU_OffsetType: VectorOfRankAndType<[1], [Index]>;
 def XeGPU_MaskType: AnyTypeOf<[VectorOfRankAndType<[1,2], [I1]>, I1]>;
 def XeGPU_ValueType: AnyTypeOf<[VectorOfRankAndType<[1,2,3,4], [XeGPU_ScalarType]>, XeGPU_ScalarType]>;
-
 def XeGPU_Vector2DType: VectorOfRankAndType<[2], [XeGPU_ScalarType]>;
 
 // common base class for types in XeGPU dialect
@@ -157,8 +154,8 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
 }
 
 
-def XeGPU_Nbarrier: XeGPUTypeDef<"Nbarrier", "nbarrier", [], "mlir::Type"> {
-  let summary = "!xegpu.nbarrier a custom XeGPU type representing a barrier.";
+def XeGPU_Nbarrier: XeGPUTypeDef<"Namedbarrier", "nbarrier", [], "mlir::Type"> {
+  let summary = "A XeGPU type representing a barrier.";
 
   let extraClassDeclaration = [{
     static NbarrierType get(mlir::MLIRContext *context) {
