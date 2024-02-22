@@ -157,6 +157,18 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
 def XeGPU_Nbarrier: XeGPUTypeDef<"Namedbarrier", "nbarrier", [], "mlir::Type"> {
   let summary = "A XeGPU type representing a barrier.";
 
+  let description = [{
+    It represents a named barrier, which is an extension of the traditional barrier 
+    operation for a threadgroup. Traditional barriers have one barrier allocated per 
+    threadgroup. With named barriers, each threadgroup allocates up to 32 barriers 
+    (range 0 - 31). And the traditional barrier is an alias for named barrier 0. 
+    An use case for name barrier is that a threadgroup is partitioned into N subgroups 
+    of threads, each subgroup coordinating their work with a separate named barriers 0..N. 
+    Then at the end, all the subgroups synchronize with each other using named barrier 0 
+    to finish their work.
+  }];
+  
+
   let extraClassDeclaration = [{
     static NbarrierType get(mlir::MLIRContext *context) {
       return Base::get(context);
