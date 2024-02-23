@@ -499,6 +499,15 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
 
 def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
   let summary = "perform ready-modify-write operation that is free from data races.";
+
+  let description = [{
+    It atomically reads, modifies, and writes back data to the memory specified 
+    by the tensor_desc. It reuses the arith dialect attribute `mlir::arith::AtomicRMWKindAttr`. 
+    In case that certain Xe GPU target does not support atomic operation for a certain data type, 
+    the user needs to convert the matrix to the supported datatype to perform the atomic operation.
+    It only works with VectorCompute mode (mode = ModeKind::VC).
+  }];
+
   let arguments = (ins
     XeGPU_AtomicRMWKindAttr:$kind,
     XeGPU_TensorDesc:$tensorDesc,
@@ -522,7 +531,12 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", []> {
 }
 
 def XeGPU_AllocNbarrierOp: XeGPU_Op<"alloc_nbarrier", []> {
-  let summary = "allocate a specific number of named barriers.";
+  let summary = "allocate named barriers.";
+  let description = [{
+    Named barriers are workgroup level resource, and shared by all subgroups. 
+    They are limited to 32 in total. So when subgroups need to use named barrier(s), 
+    they need to apply for (allocate) the resources. 
+  }];
   let arguments = (ins I64Attr: $nbarrierCount);
   let assemblyFormat = "$nbarrierCount attr-dict";
 }
@@ -530,6 +544,15 @@ def XeGPU_AllocNbarrierOp: XeGPU_Op<"alloc_nbarrier", []> {
 
 def XeGPU_CreateNbarrierOp: XeGPU_Op<"create_nbarrier", []> {
   let summary = "create a named barrier.";
+
+  let description = [{
+    It assigns a role for a specific named barrier to be producer and/or consumer. 
+    The returned nbarrier object holds a description of the specified barrier, which 
+    encodes all the barrier information. It also binds the current thread with the 
+    named barrier by holding the returned nbarrier object. Multiple threads may bind 
+    to the same nbarrier so that they can sync with each other.
+  }];
+
   let arguments = (ins I8: $nbarrier_id,
           I8: $nbarrier_role,
           I8Attr: $num_producers,
@@ -540,24 +563,34 @@ def XeGPU_CreateNbarrierOp: XeGPU_Op<"create_nbarrier", []> {
 }
 
 def XeGPU_NbarrierArriveOp: XeGPU_Op<"nbarrier_arrive", []> {
-  let summary = "arrive at a named barrier.";
+  let summary = "It notifies other threads sharing the same named barrier that it has arrived.";
   let arguments = (ins XeGPU_Nbarrier: $payload);
   let assemblyFormat = [{ $payload attr-dict `:` qualified(type($payload))}];
 }
 
 def XeGPU_NbarrierWaitOp: XeGPU_Op<"nbarrier_wait", []> {
   let summary = "wait for a named barrier.";
+  let description = [{ 
+    It pause the executing thread to wait until all other threads sharing the same 
+    named barrier have signaled the arrival.
+  }]; 
   let arguments = (ins XeGPU_Nbarrier: $payload);
   let assemblyFormat = [{ $payload attr-dict `:` qualified(type($payload)) }];
 }
 
 def XeGPU_CompileHintOp: XeGPU_Op<"compile_hint", []> {
   let summary = "prevents the compiler from scheduling.";
+  let description = [{
+    It passes performance hints to the lower-level compiler. 
+    The schedule_barrier hint prevents instructions from being reordered by a 
+    lower-level compiler. For example, a prefetch instruction is location-sensitive, 
+    but the lower-level compiler may schedule it to an undesired location.
+  }];
   let assemblyFormat = [{ attr-dict }];
 }
 
 def XeGPU_MfenceOp: XeGPU_Op<"mfence", []> {
-  let summary = "lsc fence.";
+  let summary = "It synchronizes the memory access between write and following read or write.";
   let arguments = (ins StrAttr: $memory_kind,
                        StrAttr: $fence_op,
                        StrAttr: $fence_scope);
