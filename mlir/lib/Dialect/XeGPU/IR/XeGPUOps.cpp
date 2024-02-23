@@ -1716,31 +1716,6 @@ LogicalResult DpasOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// XeGPU_InvokeSIMDOp
-//===----------------------------------------------------------------------===//
-void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
-                         SymbolRefAttr callee, TypeRange results,
-                         ArgTypeKindAttr argType, ValueRange operands) {
-  state.addOperands(operands);
-  state.addAttribute("argType", argType);
-  state.addAttribute("callee", callee);
-  state.addTypes(results);
-}
-
-void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
-                         StringAttr callee, TypeRange results,
-                         ArgTypeKindAttr argType, ValueRange operands) {
-  build(builder, state, SymbolRefAttr::get(callee), results, argType, operands);
-}
-
-void InvokeSIMDOp::build(OpBuilder &builder, OperationState &state,
-                         llvm::StringRef callee, TypeRange results,
-                         ArgTypeKindAttr argType, ValueRange operands) {
-  build(builder, state, StringAttr::get(builder.getContext(), callee), results,
-        argType, operands);
-}
-
-//===----------------------------------------------------------------------===//
 // XeGPU_AtomicRMWOp
 //===----------------------------------------------------------------------===//
 void AtomicRMWOp::build(OpBuilder &builder, OperationState &state, Type result,

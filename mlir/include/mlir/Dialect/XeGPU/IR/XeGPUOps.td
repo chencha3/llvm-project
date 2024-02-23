@@ -145,15 +145,21 @@ def XeGPU_CreateNdDescOp: XeGPU_Op<"create_nd_tdesc", [Pure, AttrSizedOperandSeg
 }
 
 def XeGPU_LoadNDOp : XeGPU_Op<"load_nd"> {
-  let summary = "loads a n-D block from memory (represented by TensorDesc)" 
-                "to registers (represented by vector)";
+  let summary = "loads a n-D block from memory to registers";
   let description = [{
     LoadNDOp essentially mimics the hardware block read instruction to read 
-    a block of data from memory to register. It takes a set of cache hints 
-    for each level of cache, L1, L2 and L3. If hardware does not have a 
-    correspoding cache, Corresponding cache hint attribute will be masked.
-    If both transpose and vnni_axis present at the same time. It assume to 
-    perform transpose first and then vnni transform.
+    a block of data from a block of matrix (described by TensorDesc) to register. 
+    It assumes matrix is stored in row-major order in memory. The hardware will 
+    calculate the addresses of memory regions to be read from block size and 
+    matrix size. It takes a set of cache hints for each level of cache, L1, L2 
+    and L3 to indicate whether the data will be cached at corresponding cache level. 
+    If hardware does not have a correspoding cache, Corresponding cache hint attribute 
+    will be masked.  A valid cache hint for each cache level could be: "cached", 
+    "uncached", "streaming", or "read_invalidate".  When `transpose` or `vnni` 
+    attributs are set the hardware will automatically do the respect transform when 
+    it performs the load. Currently, retricted by the hardware supports, `transpose` 
+    is only available if element data type is 32-bit, and `vnni` transform is valid 
+    only when element data type is less than 32-bit.
   }];
 
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
@@ -182,7 +188,20 @@ def XeGPU_LoadNDOp : XeGPU_Op<"load_nd"> {
 }
 
 def XeGPU_StoreNDOp : XeGPU_Op<"store_nd", []> {
-  let summary = "stores a n-D block register region back to memory, currently only supports 2D";
+  let summary = "stores a n-D block data into memory, currently only supports 2D";
+
+  let description = [{
+    StoreNDOp mimics the hardware block write instruction to update a block 
+    of matrix (described by TensorDesc). Similar to LoadNDOp, it assumes 
+    matrix is stored in row-major order in memory. The hardware will calculate 
+    the addresses of memory cells to be updated from the block size and the
+    matrix size. It takes a set of cache hints for each level of cache, L1, L2 
+    and L3 to indicate whether the data will be cached at corresponding cache level. 
+    If hardware does not have a correspoding cache, Corresponding cache hint 
+    attribute will be masked. A valid cache hint for each cache level could be: 
+    "cached", "uncached", "write_back", or "write_through".
+  }];
+
   let arguments = (ins XeGPU_ValueType: $value,
                        XeGPU_TensorDesc: $TensorDesc,
                        OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
@@ -198,6 +217,15 @@ def XeGPU_StoreNDOp : XeGPU_Op<"store_nd", []> {
 
 def XeGPU_PrefetchNDOp : XeGPU_Op<"prefetch_nd", []> {
   let summary = "prefetches a nD block to cache";
+  let description = [{
+    It behaves like LoadNdOp except that it prefetches data from the 
+    specified memory (described by TensorDesc) into cache(s). It takes 
+    a set of cache hints for each level of cache, L1, L2 and L3 to indicate 
+    whether the data will be cached at corresponding cache level. If hardware 
+    does not have a correspoding cache, Corresponding cache hint attribute 
+    will be masked. A valid cache hint for each cache level could be: "cached", 
+    "uncached", "streaming", or "read_invalidate".
+  }];
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
                        OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
@@ -211,6 +239,13 @@ def XeGPU_PrefetchNDOp : XeGPU_Op<"prefetch_nd", []> {
 
 def XeGPU_UpdateNDOffsetOp : XeGPU_Op<"update_nd_offset", []> {
   let summary = "update the offsets for the given tensor descriptor";
+  let description = [{
+    it updates the offsets for the given tensor descriptor such that the 
+    descriptor will describe a different block of the matrix. The offsets
+    are relative offset to the current position in the number of data elements. 
+    The operation is used when the processing over one block is completed and 
+    moves to a new position. 
+  }];
 
   let arguments = (ins
     XeGPU_TensorDesc: $TensorDesc,
@@ -229,8 +264,9 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
     "create_tdesc" is similar to "create_nd_tdesc" in terms that it creates 
     a Tensor Descriptor (TensorDescType) for a memory region. While "create_nd_tdesc" 
     is for creating continious subviews, "create_tdesc" is for creating non-continious
-    (scattered) subviews. It is designed only works with VectorCompute (VC) mode and 
-    accepts the following parameters:
+    (scattered) subviews. To differenciate it with the TensorDesc created by CreateNdDescOp,
+    and ScatteredAttr is attached to the result descriptor. It is designed only works 
+    with VectorCompute mode (mode = ModeKind::VC) and accepts the following parameters:
 
     * source: a 1D memref or pointer (uint64_t) represents the memory object.
     * offsets: It is a 1D vector containing offsets of each access point, the supportted 
@@ -238,6 +274,12 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
           to a work item (SIMT lane) in the subgroup.
     * chunk_size_per_lane: [optional attribute] indicates number of continious elements 
           accessed for each offset, default is 1.
+ 
+    The total size of the TensorDesc created by CreateDescOp is determined by two factors:
+    * the subgroup size, it is an hardware feature specifies how many workitems 
+      is executed by a hardware threads
+    * chunk_size_per_lane, it determines number of continious data elements accessed by 
+      each workitem
 
     Example 1. It assumes subgroup size is 4, and accesses a[0], a[16], a[32], a[64]
     %a = memref.alloc() : memref<1024xf32>
@@ -272,7 +314,16 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure]> {
 }
 
 def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
-  let summary = "load a scalar at source[offset].";
+  let summary = "load scalar data from the memory specified by tensor_desc (aka. load).";
+
+  let description = [{
+    It loads data per each work item, and only works on TensorDesc created from CreateDescOp.
+    It follows semantics of CreateDescOP. The output vector size is consistent with the number 
+    of work-items in a subgroup. The output describes the data being loaded at the subgroup level. 
+    It is VC mode only. When loading a tensor_desc with chunk_size_per_lane attribute, the output 
+    vector will be 2D vector, with the chunk being treated as a new dimension. Each work-item i 
+    will load a consecutive 1D tensor data. It only works with VectorCompute mode (mode = ModeKind::VC).
+  }];
 
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_MaskType: $mask,
@@ -308,7 +359,12 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
 }
 
 def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
-  let summary = "store a scalar to source[offset].";
+  let summary = "store scalars to the memory specified by tensor_desc (aka. store).";
+
+  let description = [{
+    It has similar semantic to the LoadGather, except that it stores data per each work item. 
+    It only works on TensorDesc created from CreateDescOp, and with VectorCompute mode (mode = ModeKind::VC).
+  }];
 
   let arguments = (ins
     XeGPU_ValueType: $value,
@@ -339,7 +395,15 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
 }
 
 def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
-  let summary = "prefetches a nD block to cache";
+  let summary = "prefetches data from memory into cache";
+
+  let description = [{
+    it prefetches data from the memory specified by TensorDesc. It has similar semantic
+    to LoadGather, except that it only prefetches data to the cache, instead of register.
+    It only works on TensorDesc created from CreateDescOp, and with VectorCompute mode 
+    (mode = ModeKind::VC).
+  }];
+
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
          OptionalAttr<XeGPU_CacheAttr>: $l1_hint,
          OptionalAttr<XeGPU_CacheAttr>: $l2_hint,
@@ -367,6 +431,16 @@ def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
 
 def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
   let summary = "update the offsets for the given tensor descriptor";
+
+  let description = [{
+    It is similar to UpdateNdOffsetOp, but it only works on TensorDesc created from 
+    CreateDescOp, and with VectorCompute mode (mode = ModeKind::VC). While the offset 
+    in CreateNdDescOp is a 2D array describing the offset to start point on 2D matrix,
+    the offset in UpdateOffset is an N-D array describing the linearized offset to 
+    start point of a memory region for each work-item in a subgroup, which totally 
+    has N workitems.
+  }];
+
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_OffsetType: $offsets,
                        DefaultValuedAttr<XeGPU_ModeAttr, "xegpu::ModeKind::SIMT">: $mode);
@@ -382,7 +456,17 @@ def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", []> {
 }
 
 def XeGPU_DpasOp : XeGPU_Op<"dpas"> {
-  let summary = "performs dpas computation";
+  let summary = "performs matrix multiplication computation";
+
+  let description = [{
+    It does the matrix multiplication on the 2D matrix represented as 2D or 3D vectors. 
+    When the input matrix is a lower-precision data type (lower than 32bit), the input 
+    vectors uses 3D representation. As the matrix B must be in VNNI layout, the reduction 
+    dimension needs to be split into 2 dimensions, and the 3rd inner dimension has 2 or 
+    more (vnni factor) data elements fitting the 32bit. The accumulator and result vector 
+    are always in 2D.
+  }];
+  
   let arguments = (ins
     XeGPU_DpasOpType : $lhs,
     XeGPU_DpasOpType : $rhs,

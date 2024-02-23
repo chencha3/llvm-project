@@ -105,8 +105,6 @@ def CACHE_KIND_INVALIDATE:    I32EnumAttrCase<"READ_INVALIDATE", 3, "read_invali
 def CACHE_KIND_WRITE_BACK:    I32EnumAttrCase<"WRITE_BACK", 4, "write_back">;            // valid for write only
 def CACHE_KIND_WRITE_THROUGH: I32EnumAttrCase<"WRITE_THROUGH", 5, "write_through">;      // valid for write only
 
-
-
 def XeGPU_CacheKind : I32EnumAttr<"CacheKind", "Cache kind", 
   [CACHE_KIND_CACHED, CACHE_KIND_UNCACHED, 
    CACHE_KIND_STREAMING, CACHE_KIND_INVALIDATE,
@@ -115,7 +113,6 @@ def XeGPU_CacheKind : I32EnumAttr<"CacheKind", "Cache kind",
   let cppNamespace = "::mlir::xegpu";
 }
 
-def XeGPU_ArgTypeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ArgTypeKind, "arg_type_kind">;
 def XeGPU_ModeAttr : EnumAttr<XeGPU_Dialect, XeGPU_ModeKind, "mode_kind">;
 def XeGPU_MemoryScopeAttr : EnumAttr<XeGPU_Dialect, XeGPU_MemoryScopeKind, "memory_scope_kind">;
 def XeGPU_CacheAttr : EnumAttr<XeGPU_Dialect, XeGPU_CacheKind, "cache_kind">;

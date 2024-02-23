@@ -170,7 +170,7 @@ def XeGPU_Nbarrier: XeGPUTypeDef<"Namedbarrier", "nbarrier", [], "mlir::Type"> {
   
 
   let extraClassDeclaration = [{
-    static NbarrierType get(mlir::MLIRContext *context) {
+    static NamedbarrierType get(mlir::MLIRContext *context) {
       return Base::get(context);
     };
   }];
