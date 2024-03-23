@@ -126,6 +126,20 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
       // return default value
       return true;
     }
+
+    UnitAttr getScattered() {
+      auto attr = getEncodingAsTensorDescAttr();
+      if (attr)
+        return attr.getScattered();
+      return {};
+    }
+
+    bool isScattered() {
+      auto attr = getEncodingAsTensorDescAttr();
+      if (attr)
+        return attr.getScattered() == UnitAttr();
+      return false;
+    }
   }];
 
   let hasCustomAssemblyFormat = true;

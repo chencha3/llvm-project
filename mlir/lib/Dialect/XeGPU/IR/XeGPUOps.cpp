@@ -10,6 +10,8 @@
 #include "mlir/Dialect/XeGPU/IR/XeGPU.h"
 #include "mlir/IR/Builders.h"
 
+#include "llvm/Support/Debug.h"
+
 #define DEBUG_TYPE "xegpu"
 
 namespace mlir {
@@ -196,6 +198,77 @@ LogicalResult StoreNdOp::verify() {
            << "The result shape should match the TensorDesc shape.\n";
   return success();
 }
+
+
+//===----------------------------------------------------------------------===//
+// XeGPU_CreateDescOp
+//===----------------------------------------------------------------------===//
+void CreateDescOp::build(OpBuilder &builder, OperationState &state,
+                         TensorDescType TensorDesc, Value source, Value offsets,
+                         uint32_t chunk_size) {
+  state.addOperands(source);
+  state.addOperands(offsets);
+  state.getOrAddProperties<Properties>().chunk_size =
+      builder.getIntegerAttr(builder.getIntegerType(32), chunk_size);
+
+  state.addTypes(TensorDesc);
+}
+
+void CreateDescOp::build(OpBuilder &builder, OperationState &state,
+                         TensorDescType TensorDesc, Value source, Value offsets,
+                         IntegerAttr chunk_size) {
+  state.addOperands(source);
+  state.addOperands(offsets);
+  if (chunk_size)
+    state.getOrAddProperties<Properties>().chunk_size = chunk_size;
+  state.addTypes(TensorDesc);
+}
+
+
+LogicalResult CreateDescOp::verify() {
+  auto tdescTy = getTensorDescType();
+  llvm::dbgs() << "tdescTy: " << tdescTy 
+               << " source: " << getSource() 
+               << " offsets: " << getMixedOffsets().size()
+               << " chunk_size: " << getChunkSize()
+               << " scattered: " << tdescTy.getScattered() 
+               << " isScattered: " << tdescTy.isScattered() 
+               << "\n";
+#if 0
+  auto mapping = getTensorDesc().getType().getMapping();
+  auto offsetTy = getOffsets().getType();
+  auto tdescTy = getTensorDesc().getType();
+  auto chunkSize = getChunkSize();
+  if (getRankOf(getSource()) > 2)
+    return emitOpError(
+        "Expecting the source is a 1D/2D memref or pointer (uint64_t).");
+
+  if (!tdescTy.getScattered())
+    return emitOpError(
+        "Expecting the presence of ScatteredAttr for tensor descriptor.");
+
+  // Infer the TensorDesc shape
+  std::vector<int64_t> shape;
+  if (llvm::isa<VectorType>(offsetTy)) {
+    shape = llvm::dyn_cast<VectorType>(offsetTy).getShape().vec();
+    if (shape.size() != 1)
+      return emitOpError("Expecting the offset is a 1D vector.");
+  }
+
+  if (chunkSize != 1) {
+    shape.push_back(chunkSize);
+  }
+
+  auto tdescShape = tdescTy.getShape();
+  if (shape != tdescShape.vec()) {
+    return emitOpError("Expecting dimensions of offsets is the same as the "
+                       "tensor descriptor, or one less than.");
+  }
+#endif
+
+  return success();
+}
+
 
 } // namespace xegpu
 } // namespace mlir

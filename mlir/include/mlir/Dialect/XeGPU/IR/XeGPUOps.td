@@ -60,22 +60,21 @@ def XeGPU_CreateNdDescOp: XeGPU_Op<"create_nd_tdesc", [Pure, ViewLikeOpInterface
     * source: an object representing (starting address/pointer of) a 2D memory region. 
         It can be either a 2D memref object, or simply a pointer represented by uint64_t type.
         for the later case, the shape and layout information of the 2D memory region should 
-        be explicitly passed via `dynamic_shape` and `dynamic_strides` parameters.
+        be explicitly passed via `shape` and `strides` parameters.
     * offsets: two index values represents offsets from the "source" at the each dimension 
         at which the subview of the target memory will be created. It is encoded via two
-        variables, including "dynamic_offsets" and "static_offsets", such that it can
-        accept various forms, such as, operands (e.g., [%c0, %c]) and attributes (e.g., [2, 4])).
+        variables, including "offsets" and "const_offsets", such that it can
+        accept various forms, such as, operands (e.g., [%c0, %c]) and attributes (e.g., [2, 4]).
     * shape: the shape information of the memory region pointed by the "source".  It is 
         typically encoded via the MemRefType of the source, e.g., memref<4096x4096xf16>. 
         But if "source" is simply a pointer represented as uint64_t type, or a memref 
         type without shape information e.g., memref<?x?xf16>, the shape information has 
-        to be explicitly passed via the "dynamic_shape" argument. Currently "dynamic_shape" 
-        only accepts operands(e.g., [%c4096, %c4096]), not attributes(e.g., [4096, 4096]).
+        to be explicitly passed via the "shape" and "const_shape" arguments. 
     * strides: the strides of the memory region pointed by the "source". Similar to shape, 
         it is typically encoded via the MemRefType of the source too. But if "source" is 
         simply a pointer represented as uint64_t type, or a memref type without shape 
         information e.g., memref<?x?xf16>, the strides information has to be explicitly 
-        passed via the "dynamic_strides" argument. And it currently only accepts operands two.
+        passed via the "strides" and "const_strides" argument. 
 
     Example 1 (suppose the tensor shape inferred by the compiler is 8x16):
     %0 = memref.alloc() : memref<1024x1024xf32>
@@ -321,6 +320,69 @@ def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", []> {
 
   let assemblyFormat = [{$value `,` $TensorDesc prop-dict attr-dict 
                         `:` type($value) `,` qualified(type($TensorDesc))}];
+  let hasVerifier = 1;
+}
+
+def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
+  let summary = "create scattered tensor descriptors (TensorDesc).";
+  let description = [{
+    "create_tdesc" is similar to "create_nd_tdesc" in terms that it creates 
+    a Tensor Descriptor (TensorDescType) for a memory region. While "create_nd_tdesc" 
+    is for creating continious subviews, "create_tdesc" is for creating non-continious
+    (scattered) subviews, allowing each work-item in a subgroup specifying their own offset. 
+    It accepts the following parameters:
+
+    * source: a 1D memref or pointer (uint64_t) represents the memory object.
+    * offsets: a array containing offsets of each access point. Its size 
+      is fixed to the hardware supportted subgroup size, e.g., 16 on PVC, 
+      implying each element in the array corresponds to a work-item (SIMT lane) 
+      in the subgroup.
+    * chunk_size: [optional attribute] indicates number of continious 
+      elements accessed for each offset, default is 1.
+
+    Example 1. It assumes subgroup size is 4, and accesses a[0], a[16], a[32], a[64]
+    %a = memref.alloc() : memref<1024xf32>
+    %1 = xegpu.create_tdesc %a[0, 16, 32, 64]: memref<1024xf32> -> TensorDesc<4xf32>
+
+    Example 2. It assumes subgroup size is 4, and each workitem access 8 elements.
+               It will access totally 32 data elements: a[0:7], a[16:23], a[32:39], a[64:71]
+    %0 = memref.alloc() : memref<1024xf32>
+    %1 = xegpu.create_tdesc %0[0, 16, 32, 64] {chunk_size = 8}: memref<1024xf32> -> TensorDesc<4x8xf32>
+  }];
+
+  let arguments = (ins XeGPU_BaseAddrType: $source,
+                       Variadic<Index>: $offsets,
+                       DenseI64ArrayAttr: $const_offsets,
+                       DefaultValuedAttr<I64Attr, "1">: $chunk_size);
+  let results = (outs XeGPU_TensorDesc:$TensorDesc);
+
+  let builders = [
+    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
+                  "Value": $offsets, CArg<"uint32_t", "1"> : $chunk_size)>,
+    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
+                  "Value": $offsets, "IntegerAttr": $chunk_size)>
+  ];
+
+  let assemblyFormat = [{
+    $source
+    custom<DynamicIndexList>($offsets, $const_offsets)
+    attr-dict `:`  type($source) `->` qualified(type($TensorDesc))
+  }];
+
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+
+    SmallVector<OpFoldResult> getMixedOffsets() {
+      Builder b(getContext());
+      return getMixedValues(getConstOffsets(), getOffsets(), b);
+    }
+
+    mlir::Value getViewSource() { return getSource(); }
+
+  }];
+
   let hasVerifier = 1;
 }
 

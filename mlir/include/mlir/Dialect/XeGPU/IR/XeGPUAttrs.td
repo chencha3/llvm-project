@@ -20,6 +20,7 @@ class XeGPUAttr<string name, string attrMnemonic, list<Trait> traits = [],
 
 def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
   let parameters = (ins
+    OptionalParameter<"UnitAttr">: $scattered,
     OptionalParameter<"MemoryScopeAttr">: $memory_scope,
     OptionalParameter<"IntegerAttr", "1">: $array_length,
     OptionalParameter<"BoolAttr", "true">: $boundary_check
@@ -33,7 +34,7 @@ def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
     )>
   ];
 
-  let assemblyFormat = "`<` struct(params) `>`";
+  let assemblyFormat = "`<` (`scattered``,` $scattered^)? struct($memory_scope, $array_length, $boundary_check) `>`";
 }
 
 //===----------------------------------------------------------------------===//
