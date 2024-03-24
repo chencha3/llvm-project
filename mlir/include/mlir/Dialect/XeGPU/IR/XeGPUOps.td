@@ -214,8 +214,8 @@ def XeGPU_CreateNdDescOp: XeGPU_Op<"create_nd_tdesc", [Pure, ViewLikeOpInterface
 def XeGPU_PrefetchNdOp : XeGPU_Op<"prefetch_nd", []> {
   let summary = "prefetches a nD block to cache";
   let description = [{
-    It issues an instruction to prefetch the data from memory to each 
-    level of the cache based on their cache policy.
+    It issues an instruction to prefetch a block of data from continuous 
+    memory regions to each level of the cache based on their cache policy.
 
     Example:
     ```
@@ -232,9 +232,15 @@ def XeGPU_PrefetchNdOp : XeGPU_Op<"prefetch_nd", []> {
                        OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
                        OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
                        
-  let extraClassDeclaration = extraBaseClassDeclaration;
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+  }];
 
   let assemblyFormat = "$TensorDesc prop-dict attr-dict `:` qualified(type($TensorDesc))";
+
+  let hasVerifier = 1;
 }
 
 
@@ -379,11 +385,113 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
       return getMixedValues(getConstOffsets(), getOffsets(), b);
     }
 
+    size_t getNumOffsets() {
+      return getMixedOffsets().size();
+    }
+
     mlir::Value getViewSource() { return getSource(); }
+
+    OpFoldResult getOffset(unsigned idx) {
+      assert(idx < getNumOffsets() && "Invalid out of bound access.");
+      return getMixedOffsets()[idx];
+    }
 
   }];
 
   let hasVerifier = 1;
+}
+
+def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
+  let summary = "prefetches a set of scattered data points to cache";
+
+  let description = [{
+    It issues instructions to prefetch a set of scattered data points 
+    from memory to each level of the cache based on their cache policy.
+    As compared to prefetch_nd, which works on non-scattered TensorDesc, 
+    it works on scattered TensorDesc.
+
+    Example:
+    ```
+      xegpu.prefetch %tdesc {l1_hint = #xegpu.cache_hint<cached>, 
+                             l2_hint = #xegpu.cache_hint<cached>, 
+                             l3_hint = #xegpu.cache_hint<cached>}
+        : !xegpu.tensor_desc<16xf16>
+    ```
+
+  }];
+
+  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
+
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+  }];
+
+  let assemblyFormat = "$TensorDesc prop-dict attr-dict `:` qualified(type($TensorDesc))";
+
+  // let hasVerifier = 1;
+}
+
+def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
+  let summary = "load a set of scattered data points from memory.";
+
+  let description = [{
+
+  Example:
+  ```  
+    %2 = xegpu.load %1, %0 {transpose = [1, 0], 
+                            l1_hint = #xegpu.cache_hint<cached>, 
+                            l2_hint = #xegpu.cache_hint<uncached>,
+                            l3_hint = #xegpu.cache_hint<uncached>}
+          : !xegpu.tensor_desc<16xf32, #xegpu.tdesc_attr<scattered=true>>, vector<16xi1> 
+            -> vector<16xf32>
+  ```
+
+  }];
+
+  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
+                       XeGPU_MaskType: $mask,
+                       OptionalAttr<I64Attr>: $vnni_axis,
+                       OptionalAttr<DenseI64ArrayAttr>: $transpose,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l1_hint,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
+                       OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
+  let results = (outs XeGPU_ValueType: $value);
+
+  let assemblyFormat = [{$TensorDesc `,` $mask prop-dict attr-dict 
+      `:` qualified(type($TensorDesc)) `,` type($mask) `->` type($value)}];
+  //let hasVerifier = 1;
+}
+
+def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
+  let summary = "store a scalar to source[offset].";
+  let description = [{
+
+  Example:
+  ```  
+    %3 = xegpu.store %0, %1, %2 {l1_hint = #xegpu.cache_hint<uncached>,
+                                 l2_hint = #xegpu.cache_hint<write_back>, 
+                                 l3_hint = #xegpu.cache_hint<write_through>}
+          : vector<16xf32>, !xegpu.tensor_desc<16xf32, #xegpu.tdesc_attr<scattered=true>>, vector<16xi1>
+  ```
+  }];
+
+  let arguments = (ins
+    XeGPU_ValueType: $value,
+    XeGPU_TensorDesc: $TensorDesc,
+    XeGPU_MaskType: $mask,
+    OptionalAttr<XeGPU_CacheHintAttr>: $l1_hint,
+    OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
+    OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
+
+  let assemblyFormat = [{$value `,` $TensorDesc `,` $mask prop-dict attr-dict 
+            `:` type($value) `,` qualified(type($TensorDesc)) `,` type($mask)}];
+
+  // let hasVerifier = 1;
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD

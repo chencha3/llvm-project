@@ -116,6 +116,19 @@ LogicalResult CreateNdDescOp::verify() {
     return emitOpError("TensorDesc should have the same element "
                        "type with the source if it is a memref.\n");
 
+  if (getType().getScattered())
+    return emitOpError("Expecting a non-scattered tensor descriptor.");
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// XeGPU_PrefetchNdOp
+//===----------------------------------------------------------------------===//
+LogicalResult PrefetchNdOp::verify() {
+  auto tdescTy = getTensorDescType();
+  if (tdescTy.getScattered())
+    return emitOpError("Expecting a non-scattered tensor descriptor.");
   return success();
 }
 
@@ -129,6 +142,9 @@ LogicalResult LoadNdOp::verify() {
   if (tdescTy.getRank() != 2)
     return emitOpError(
         "The TensorDesc for LoadNdOp should be a 2D TensorDesc.");
+
+  if (tdescTy.getScattered())
+    return emitOpError("Expecting a non-scattered tensor descriptor.");
 
   if (!valueTy)
     return emitOpError("Invalid result, it should be a VectorType.\n");
@@ -182,6 +198,9 @@ LogicalResult StoreNdOp::verify() {
   if (dstTy.getRank() != 2)
     return emitOpError("Expecting a 2D TensorDesc shape.\n");
 
+  if (dstTy.getScattered())
+    return emitOpError("Expecting a non-scattered tensor descriptor.");
+
   if (!valTy)
     return emitOpError("Exepcting a VectorType result.\n");
 
@@ -227,34 +246,22 @@ void CreateDescOp::build(OpBuilder &builder, OperationState &state,
 
 LogicalResult CreateDescOp::verify() {
   auto tdescTy = getTensorDescType();
-  llvm::dbgs() << "tdescTy: " << tdescTy 
-               << " source: " << getSource() 
-               << " offsets: " << getMixedOffsets().size()
-               << " chunk_size: " << getChunkSize()
-               << " scattered: " << tdescTy.getScattered() 
-               << " isScattered: " << tdescTy.isScattered() 
-               << "\n";
-#if 0
-  auto mapping = getTensorDesc().getType().getMapping();
-  auto offsetTy = getOffsets().getType();
-  auto tdescTy = getTensorDesc().getType();
   auto chunkSize = getChunkSize();
+
+  auto getRankOf = [&](Value val){
+    auto type = val.getType();
+    if (auto ty = llvm::dyn_cast<MemRefType>(type))
+      return ty.getRank();
+    return (int64_t)0;
+  };
+
   if (getRankOf(getSource()) > 2)
-    return emitOpError(
-        "Expecting the source is a 1D/2D memref or pointer (uint64_t).");
+    return emitOpError("Expecting the source is a 1D memref or pointer (uint64_t).");
 
   if (!tdescTy.getScattered())
-    return emitOpError(
-        "Expecting the presence of ScatteredAttr for tensor descriptor.");
+    return emitOpError("Expecting a Scattered tensor descriptor.");
 
-  // Infer the TensorDesc shape
-  std::vector<int64_t> shape;
-  if (llvm::isa<VectorType>(offsetTy)) {
-    shape = llvm::dyn_cast<VectorType>(offsetTy).getShape().vec();
-    if (shape.size() != 1)
-      return emitOpError("Expecting the offset is a 1D vector.");
-  }
-
+  std::vector<int64_t> shape({getNumOffsets()});
   if (chunkSize != 1) {
     shape.push_back(chunkSize);
   }
@@ -264,7 +271,6 @@ LogicalResult CreateDescOp::verify() {
     return emitOpError("Expecting dimensions of offsets is the same as the "
                        "tensor descriptor, or one less than.");
   }
-#endif
 
   return success();
 }
