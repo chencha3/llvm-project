@@ -433,7 +433,7 @@ def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
 
   let assemblyFormat = "$TensorDesc prop-dict attr-dict `:` qualified(type($TensorDesc))";
 
-  // let hasVerifier = 1;
+  let hasVerifier = 1;
 }
 
 def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
@@ -462,9 +462,23 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
                        OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
   let results = (outs XeGPU_ValueType: $value);
 
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+
+    mlir::Type getElementType() {
+      auto type = getValue().getType();
+      if (auto vecTy = llvm::dyn_cast<VectorType>(type))
+        return vecTy.getElementType();
+      return type;
+    }
+  }];
+
   let assemblyFormat = [{$TensorDesc `,` $mask prop-dict attr-dict 
       `:` qualified(type($TensorDesc)) `,` type($mask) `->` type($value)}];
-  //let hasVerifier = 1;
+
+  let hasVerifier = 1;
 }
 
 def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
@@ -488,10 +502,24 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
     OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
     OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
 
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+    
+    Type getValueType() {
+      return getValue().getType();
+    }
+
+    Type getMaskType() {
+      return getMask().getType();
+    }
+  }];
+
   let assemblyFormat = [{$value `,` $TensorDesc `,` $mask prop-dict attr-dict 
             `:` type($value) `,` qualified(type($TensorDesc)) `,` type($mask)}];
 
-  // let hasVerifier = 1;
+  let hasVerifier = 1;
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD

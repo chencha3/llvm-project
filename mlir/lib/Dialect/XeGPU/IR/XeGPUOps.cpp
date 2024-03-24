@@ -40,6 +40,17 @@ static std::string makeString(T array, bool breakline = false) {
   return buf;
 }
 
+static std::vector<int64_t> getShapeOf(Type type) {
+  std::vector<int64_t> shape;
+  if (llvm::isa<VectorType>(type))
+    shape = llvm::dyn_cast<VectorType>(type).getShape().vec();
+  else if (type.isIntOrIndexOrFloat())
+    shape.push_back(1);
+  else 
+    llvm_unreachable("Unsupported type.");
+  return shape;
+};
+
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateNdDescOp
 //===----------------------------------------------------------------------===//
@@ -275,6 +286,111 @@ LogicalResult CreateDescOp::verify() {
   return success();
 }
 
+
+//===----------------------------------------------------------------------===//
+// XeGPU_PrefetchOp
+//===----------------------------------------------------------------------===//
+LogicalResult PrefetchOp::verify() {
+  auto tdescTy = getTensorDescType();
+
+  auto isValidHint = [&](CachePolicyAttr attr) -> bool {
+    if (!attr)
+      return true;
+    auto kind = attr.getValue();
+    return kind == CachePolicy::CACHED || kind == CachePolicy::UNCACHED ||
+           kind == CachePolicy::STREAMING || kind == CachePolicy::READ_INVALIDATE;
+  };
+
+  if (!tdescTy.getScattered())
+    return emitOpError("Invalid TensorDesc. PrefetchOp only works on "
+                       "TensorDescs with ScatteredAttr.");
+
+  if (!isValidHint(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
+
+  if (!isValidHint(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
+
+  if (!isValidHint(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// XeGPU_LoadGatherOp
+//===----------------------------------------------------------------------===//
+LogicalResult LoadGatherOp::verify() {
+  auto tdescTy = getTensorDescType();
+  auto maskTy = getMask().getType();
+  auto valueTy = getValue().getType();
+
+  if (!tdescTy.getScattered())
+    return emitOpError(
+        "LoadGatherOp only works on TensorDesc with ScatteredAttr.");
+
+  auto tdescElemTy = tdescTy.getElementType();
+  auto valueElemTy = getElementType();
+  if (tdescElemTy != valueElemTy)
+    return emitOpError(
+        "Value should have the same element type as TensorDesc.");
+
+  std::vector<int64_t> maskShape = getShapeOf(maskTy);
+  std::vector<int64_t> valueShape = getShapeOf(valueTy);
+  std::vector<int64_t> tdescShape = tdescTy.getShape().vec();
+
+  if (tdescShape != maskShape)
+    return emitOpError("Mask should have the same shape as TensorDesc.");
+
+  if (getTransposeAttr()) {
+    auto trans = getTranspose().value();
+    if (tdescShape.size() < trans.size())
+      return emitWarning("Invalid transpose attr. It is ignored.");
+    transpose(trans, tdescShape);
+  }
+
+  if (getVnniAxis()) {
+    auto axis = getVnniAxis().value();
+    auto vnni_factor = valueShape.back();
+    tdescShape[axis] /= vnni_factor;
+    tdescShape.push_back(vnni_factor);
+  }
+
+  if (valueShape != tdescShape)
+    return emitOpError(
+        "Result shape doesn't match TensorDesc shape. when VNNI is not enabled,"
+        "the result should have the same shape (or transposed shape if "
+        "transpose is also enabled) as TensorDesc. When VNNI is enabled, "
+        "the result should have one more dimention than the TensorDesc, "
+        "with last dimention having vnni factor, but having same number of"
+        "total data elements. The vnni factor are typically calculated as "
+        "simd_lane_width/elementTypeBitWidth. For element type having "
+        "more than 32 bits, vnni shouldn't be used.\n");
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// XeGPU_StoreScatterOp
+//===----------------------------------------------------------------------===//
+LogicalResult StoreScatterOp::verify() {
+  auto tdescTy = getTensorDescType();
+  auto valueTy = getValueType();
+  auto maskTy = getMaskType();
+
+  if (!tdescTy.getScattered())
+    return emitOpError("Invalid TensorDesc. StoreScatterOp only works on "
+                       "TensorDescs with ScatteredAttr.");
+
+  std::vector<int64_t> maskShape = getShapeOf(maskTy);
+  std::vector<int64_t> valueShape = getShapeOf(valueTy);
+  std::vector<int64_t> tdescShape = tdescTy.getShape().vec();
+
+  if (tdescShape != valueShape || tdescShape != valueShape)
+    return emitOpError("Shape among TensorDesc, Value, and Mask don't match.\n");
+
+  return success();
+}
 
 } // namespace xegpu
 } // namespace mlir
