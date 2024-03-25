@@ -22,18 +22,20 @@ def XeGPU_TensorDescAttr: XeGPUAttr<"TensorDesc", "tdesc_attr"> {
   let parameters = (ins
     OptionalParameter<"MemoryScopeAttr">: $memory_scope,
     OptionalParameter<"IntegerAttr", "1">: $array_length,
-    OptionalParameter<"BoolAttr", "true">: $boundary_check
+    OptionalParameter<"BoolAttr", "true">: $boundary_check,
+    OptionalParameter<"BoolAttr", "false">: $scattered
   );
 
   let builders = [
     AttrBuilder<(ins
       CArg<"xegpu::MemoryScope", "xegpu::MemoryScope::Global">:$memory_scope,
       CArg<"int", "1">:$array_length,
-      CArg<"bool", "true">: $boundary_check
+      CArg<"bool", "true">: $boundary_check,
+      CArg<"bool", "false">: $scattered
     )>
   ];
 
-  let assemblyFormat = "`<` struct(params) `>`";
+  let assemblyFormat = "`<`struct(params) `>`";
 }
 
 //===----------------------------------------------------------------------===//
