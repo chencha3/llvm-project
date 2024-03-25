@@ -51,6 +51,16 @@ static std::vector<int64_t> getShapeOf(Type type) {
   return shape;
 };
 
+static bool isValidReadHintOrNone(const CachePolicyAttr &attr) {
+    if (!attr)
+      return true;
+    auto kind = attr.getValue();
+    return kind == CachePolicy::CACHED || 
+           kind == CachePolicy::UNCACHED ||
+           kind == CachePolicy::STREAMING || 
+           kind == CachePolicy::READ_INVALIDATE;
+  };
+
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateNdDescOp
 //===----------------------------------------------------------------------===//
@@ -128,7 +138,7 @@ LogicalResult CreateNdDescOp::verify() {
                        "type with the source if it is a memref.\n");
 
   if (getType().getScattered())
-    return emitOpError("Expecting a non-scattered tensor descriptor.");
+    return emitOpError("Expects a non-scattered TensorDesc.\n");
 
   return success();
 }
@@ -139,7 +149,7 @@ LogicalResult CreateNdDescOp::verify() {
 LogicalResult PrefetchNdOp::verify() {
   auto tdescTy = getTensorDescType();
   if (tdescTy.getScattered())
-    return emitOpError("Expecting a non-scattered tensor descriptor.");
+    return emitOpError("Expects a non-scattered TensorDesc.\n");
   return success();
 }
 
@@ -151,11 +161,10 @@ LogicalResult LoadNdOp::verify() {
   auto valueTy = getType();
 
   if (tdescTy.getRank() != 2)
-    return emitOpError(
-        "The TensorDesc for LoadNdOp should be a 2D TensorDesc.");
+    return emitOpError("Expecting a 2D TensorDesc.\n");
 
   if (tdescTy.getScattered())
-    return emitOpError("Expecting a non-scattered tensor descriptor.");
+    return emitOpError("Expects a non-scattered TensorDesc.\n");
 
   if (!valueTy)
     return emitOpError("Invalid result, it should be a VectorType.\n");
@@ -164,8 +173,7 @@ LogicalResult LoadNdOp::verify() {
   auto valueElemTy = valueTy.getElementType();
 
   if (tdescElemTy != valueElemTy)
-    return emitOpError(
-        "Value should have the same element type as TensorDesc.");
+    return emitOpError("Value should have the same element type as TensorDesc.");
 
   auto array_len = tdescTy.getArrayLength();
   auto tdescShape = tdescTy.getShape().vec();
@@ -203,14 +211,14 @@ LogicalResult LoadNdOp::verify() {
 // XeGPU_StoreNdOp
 //===----------------------------------------------------------------------===//
 LogicalResult StoreNdOp::verify() {
-  auto dstTy = getTensorDesc().getType();               // Tile
-  auto valTy = getValue().getType().cast<VectorType>(); // Vector
+  auto dstTy = getTensorDescType();               // Tile
+  auto valTy = getValueType();                    // Vector
 
   if (dstTy.getRank() != 2)
-    return emitOpError("Expecting a 2D TensorDesc shape.\n");
+    return emitOpError("Expecting a 2D TensorDesc.\n");
 
   if (dstTy.getScattered())
-    return emitOpError("Expecting a non-scattered tensor descriptor.");
+    return emitOpError("Expects a non-scattered TensorDesc.\n");
 
   if (!valTy)
     return emitOpError("Exepcting a VectorType result.\n");
@@ -218,14 +226,11 @@ LogicalResult StoreNdOp::verify() {
   auto dstElemTy = dstTy.getElementType();
   auto valElemTy = valTy.getElementType();
 
-  if (dstElemTy != valElemTy) {
-    return emitOpError() << "The element type of the value should "
-                            "match the elementtype of the TensorDesc.\n";
-  }
+  if (dstElemTy != valElemTy)
+    return emitOpError("Value should have the same element type as TensorDesc.");
 
   if (dstTy.getShape() != valTy.getShape())
-    return emitOpError()
-           << "The result shape should match the TensorDesc shape.\n";
+    return emitOpError("Value should have the same shape as TensorDesc.\n");
   return success();
 }
 
@@ -234,26 +239,13 @@ LogicalResult StoreNdOp::verify() {
 // XeGPU_CreateDescOp
 //===----------------------------------------------------------------------===//
 void CreateDescOp::build(OpBuilder &builder, OperationState &state,
-                         TensorDescType TensorDesc, Value source, Value offsets,
-                         uint32_t chunk_size) {
-  state.addOperands(source);
-  state.addOperands(offsets);
-  state.getOrAddProperties<Properties>().chunk_size =
-      builder.getIntegerAttr(builder.getIntegerType(32), chunk_size);
-
-  state.addTypes(TensorDesc);
+                         TensorDescType TensorDesc, Value source, 
+                         llvm::ArrayRef<OpFoldResult> offsets, uint32_t chunk_size) {
+  llvm::SmallVector<int64_t> staticOffsets;
+  llvm::SmallVector<Value> dynamicOffsets;
+  dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
+  build(builder, state, TensorDesc, source, dynamicOffsets, staticOffsets, chunk_size);
 }
-
-void CreateDescOp::build(OpBuilder &builder, OperationState &state,
-                         TensorDescType TensorDesc, Value source, Value offsets,
-                         IntegerAttr chunk_size) {
-  state.addOperands(source);
-  state.addOperands(offsets);
-  if (chunk_size)
-    state.getOrAddProperties<Properties>().chunk_size = chunk_size;
-  state.addTypes(TensorDesc);
-}
-
 
 LogicalResult CreateDescOp::verify() {
   auto tdescTy = getTensorDescType();
@@ -270,12 +262,11 @@ LogicalResult CreateDescOp::verify() {
     return emitOpError("Expecting the source is a 1D memref or pointer (uint64_t).");
 
   if (!tdescTy.getScattered())
-    return emitOpError("Expecting a Scattered tensor descriptor.");
+    return emitOpError("Expects a scattered TensorDesc.\n");
 
   std::vector<int64_t> shape({getNumOffsets()});
-  if (chunkSize != 1) {
+  if (chunkSize != 1)
     shape.push_back(chunkSize);
-  }
 
   auto tdescShape = tdescTy.getShape();
   if (shape != tdescShape.vec()) {
@@ -293,17 +284,10 @@ LogicalResult CreateDescOp::verify() {
 LogicalResult PrefetchOp::verify() {
   auto tdescTy = getTensorDescType();
 
-  auto isValidHint = [&](CachePolicyAttr attr) -> bool {
-    if (!attr)
-      return true;
-    auto kind = attr.getValue();
-    return kind == CachePolicy::CACHED || kind == CachePolicy::UNCACHED ||
-           kind == CachePolicy::STREAMING || kind == CachePolicy::READ_INVALIDATE;
-  };
+
 
   if (!tdescTy.getScattered())
-    return emitOpError("Invalid TensorDesc. PrefetchOp only works on "
-                       "TensorDescs with ScatteredAttr.");
+    return emitOpError("Expects a scattered TensorDesc.\n");
 
   if (!isValidHint(getL1HintAttr()))
     return emitOpError("invlid l1_hint: ") << getL1HintAttr();
@@ -326,8 +310,7 @@ LogicalResult LoadGatherOp::verify() {
   auto valueTy = getValue().getType();
 
   if (!tdescTy.getScattered())
-    return emitOpError(
-        "LoadGatherOp only works on TensorDesc with ScatteredAttr.");
+    return emitOpError("Expects a scattered TensorDesc.\n");
 
   auto tdescElemTy = tdescTy.getElementType();
   auto valueElemTy = getElementType();
@@ -379,8 +362,7 @@ LogicalResult StoreScatterOp::verify() {
   auto maskTy = getMaskType();
 
   if (!tdescTy.getScattered())
-    return emitOpError("Invalid TensorDesc. StoreScatterOp only works on "
-                       "TensorDescs with ScatteredAttr.");
+    return emitOpError("Expects a scattered TensorDesc.\n");
 
   std::vector<int64_t> maskShape = getShapeOf(maskTy);
   std::vector<int64_t> valueShape = getShapeOf(valueTy);

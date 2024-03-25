@@ -322,7 +322,15 @@ def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", []> {
                        OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
                        OptionalAttr<XeGPU_CacheHintAttr>: $l3_hint);
 
-  let extraClassDeclaration = extraBaseClassDeclaration;
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    VectorType getValueType() {
+      return llvm::dyn_cast<VectorType>(getValue().getType());
+    }
+
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+  }];
 
   let assemblyFormat = [{$value `,` $TensorDesc prop-dict attr-dict 
                         `:` type($value) `,` qualified(type($TensorDesc))}];
@@ -364,9 +372,8 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
 
   let builders = [
     OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
-                  "Value": $offsets, CArg<"uint32_t", "1"> : $chunk_size)>,
-    OpBuilder<(ins "xegpu::TensorDescType": $TensorDesc, "Value": $source,
-                  "Value": $offsets, "IntegerAttr": $chunk_size)>
+                   "llvm::ArrayRef<OpFoldResult>": $offsets, 
+                   CArg<"uint32_t", "1"> : $chunk_size)>,
   ];
 
   let assemblyFormat = [{
@@ -506,7 +513,7 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
     xegpu::TensorDescType getTensorDescType() {
       return getTensorDesc().getType();
     }
-    
+
     Type getValueType() {
       return getValue().getType();
     }
