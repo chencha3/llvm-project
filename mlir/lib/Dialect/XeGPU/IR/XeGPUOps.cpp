@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/XeGPU/IR/XeGPU.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/TypeUtilities.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -42,24 +43,39 @@ static std::string makeString(T array, bool breakline = false) {
 
 static std::vector<int64_t> getShapeOf(Type type) {
   std::vector<int64_t> shape;
-  if (llvm::isa<VectorType>(type))
-    shape = llvm::dyn_cast<VectorType>(type).getShape().vec();
-  else if (type.isIntOrIndexOrFloat())
+  if (auto ty = llvm::dyn_cast<ShapedType>(type))
+    shape = ty.getShape().vec();
+  else
     shape.push_back(1);
-  else 
-    llvm_unreachable("Unsupported type.");
   return shape;
+}
+
+static int64_t getRankOf(Value val){
+  auto type = val.getType();
+  if (auto ty = llvm::dyn_cast<ShapedType>(type))
+    return ty.getRank();
+  return (int64_t)0;
 };
 
-static bool isValidReadHintOrNone(const CachePolicyAttr &attr) {
-    if (!attr)
-      return true;
-    auto kind = attr.getValue();
-    return kind == CachePolicy::CACHED || 
-           kind == CachePolicy::UNCACHED ||
-           kind == CachePolicy::STREAMING || 
-           kind == CachePolicy::READ_INVALIDATE;
-  };
+static bool isReadHintOrNone(const CachePolicyAttr &attr) {
+  if (!attr)
+    return true;
+  auto kind = attr.getValue();
+  return kind == CachePolicy::CACHED || 
+         kind == CachePolicy::UNCACHED ||
+         kind == CachePolicy::STREAMING || 
+         kind == CachePolicy::READ_INVALIDATE;
+}
+
+static bool isWriteHintOrNone(const CachePolicyAttr &attr) {
+  if (!attr)
+    return true;
+  auto kind = attr.getValue();
+  return kind == CachePolicy::CACHED || 
+         kind == CachePolicy::UNCACHED ||
+         kind == CachePolicy::WRITE_BACK|| 
+         kind == CachePolicy::WRITE_THROUGH;
+}
 
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateNdDescOp
@@ -150,6 +166,16 @@ LogicalResult PrefetchNdOp::verify() {
   auto tdescTy = getTensorDescType();
   if (tdescTy.getScattered())
     return emitOpError("Expects a non-scattered TensorDesc.\n");
+
+  if (!isReadHintOrNone(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
+
+  if (!isReadHintOrNone(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
+
+  if (!isReadHintOrNone(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
   return success();
 }
 
@@ -168,12 +194,15 @@ LogicalResult LoadNdOp::verify() {
 
   if (!valueTy)
     return emitOpError("Invalid result, it should be a VectorType.\n");
+  
+  if (!isReadHintOrNone(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
-  auto tdescElemTy = tdescTy.getElementType();
-  auto valueElemTy = valueTy.getElementType();
+  if (!isReadHintOrNone(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
 
-  if (tdescElemTy != valueElemTy)
-    return emitOpError("Value should have the same element type as TensorDesc.");
+  if (!isReadHintOrNone(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
 
   auto array_len = tdescTy.getArrayLength();
   auto tdescShape = tdescTy.getShape().vec();
@@ -223,17 +252,28 @@ LogicalResult StoreNdOp::verify() {
   if (!valTy)
     return emitOpError("Exepcting a VectorType result.\n");
 
-  auto dstElemTy = dstTy.getElementType();
-  auto valElemTy = valTy.getElementType();
+  if (!isWriteHintOrNone(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
-  if (dstElemTy != valElemTy)
-    return emitOpError("Value should have the same element type as TensorDesc.");
+  if (!isWriteHintOrNone(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
 
-  if (dstTy.getShape() != valTy.getShape())
-    return emitOpError("Value should have the same shape as TensorDesc.\n");
+  if (!isWriteHintOrNone(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// XeGPU_UpdateNDOffsetOp
+//===----------------------------------------------------------------------===//
+LogicalResult UpdateNdOffsetOp::verify() {
+  // number of offsets specified must match the rank of the tensor descriptor
+  if (getTensorDescType().getRank() != (int64_t)getNumOffsets()) {
+    return emitOpError("Invalid number of offsets.");
+  }
+  return success();
+}
 
 //===----------------------------------------------------------------------===//
 // XeGPU_CreateDescOp
@@ -251,13 +291,6 @@ LogicalResult CreateDescOp::verify() {
   auto tdescTy = getTensorDescType();
   auto chunkSize = getChunkSize();
 
-  auto getRankOf = [&](Value val){
-    auto type = val.getType();
-    if (auto ty = llvm::dyn_cast<MemRefType>(type))
-      return ty.getRank();
-    return (int64_t)0;
-  };
-
   if (getRankOf(getSource()) > 2)
     return emitOpError("Expecting the source is a 1D memref or pointer (uint64_t).");
 
@@ -269,33 +302,27 @@ LogicalResult CreateDescOp::verify() {
     shape.push_back(chunkSize);
 
   auto tdescShape = tdescTy.getShape();
-  if (shape != tdescShape.vec()) {
-    return emitOpError("Expecting dimensions of offsets is the same as the "
-                       "tensor descriptor, or one less than.");
-  }
+  if (shape != tdescShape.vec())
+    return emitOpError("Expecting the size of offsets matchs TensorDesc[0].");
 
   return success();
 }
-
 
 //===----------------------------------------------------------------------===//
 // XeGPU_PrefetchOp
 //===----------------------------------------------------------------------===//
 LogicalResult PrefetchOp::verify() {
   auto tdescTy = getTensorDescType();
-
-
-
   if (!tdescTy.getScattered())
     return emitOpError("Expects a scattered TensorDesc.\n");
 
-  if (!isValidHint(getL1HintAttr()))
+  if (!isReadHintOrNone(getL1HintAttr()))
     return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
-  if (!isValidHint(getL2HintAttr()))
+  if (!isReadHintOrNone(getL2HintAttr()))
     return emitOpError("invlid l2_hint: ") << getL2HintAttr();
 
-  if (!isValidHint(getL3HintAttr()))
+  if (!isReadHintOrNone(getL3HintAttr()))
     return emitOpError("invlid l3_hint: ") << getL3HintAttr();
 
   return success();
@@ -306,11 +333,20 @@ LogicalResult PrefetchOp::verify() {
 //===----------------------------------------------------------------------===//
 LogicalResult LoadGatherOp::verify() {
   auto tdescTy = getTensorDescType();
-  auto maskTy = getMask().getType();
-  auto valueTy = getValue().getType();
+  auto maskTy = getMaskType();
+  auto valueTy = getValueType();
 
   if (!tdescTy.getScattered())
     return emitOpError("Expects a scattered TensorDesc.\n");
+
+  if (!isReadHintOrNone(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
+
+  if (!isReadHintOrNone(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
+
+  if (!isReadHintOrNone(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
 
   auto tdescElemTy = tdescTy.getElementType();
   auto valueElemTy = getElementType();
@@ -320,35 +356,23 @@ LogicalResult LoadGatherOp::verify() {
 
   std::vector<int64_t> maskShape = getShapeOf(maskTy);
   std::vector<int64_t> valueShape = getShapeOf(valueTy);
-  std::vector<int64_t> tdescShape = tdescTy.getShape().vec();
+  std::vector<int64_t> tdescShape = getShapeOf(tdescTy);
 
-  if (tdescShape != maskShape)
-    return emitOpError("Mask should have the same shape as TensorDesc.");
+  if (tdescShape[0] != maskShape[0])
+    return emitOpError("dim-0 of the Mask and TensorDesc should be the same.");
 
   if (getTransposeAttr()) {
     auto trans = getTranspose().value();
     if (tdescShape.size() < trans.size())
-      return emitWarning("Invalid transpose attr. It is ignored.");
-    transpose(trans, tdescShape);
-  }
-
-  if (getVnniAxis()) {
-    auto axis = getVnniAxis().value();
-    auto vnni_factor = valueShape.back();
-    tdescShape[axis] /= vnni_factor;
-    tdescShape.push_back(vnni_factor);
+      emitWarning("Invalid transpose attr. It is ignored.");
+    else 
+      transpose(trans, tdescShape);
   }
 
   if (valueShape != tdescShape)
-    return emitOpError(
-        "Result shape doesn't match TensorDesc shape. when VNNI is not enabled,"
-        "the result should have the same shape (or transposed shape if "
-        "transpose is also enabled) as TensorDesc. When VNNI is enabled, "
-        "the result should have one more dimention than the TensorDesc, "
-        "with last dimention having vnni factor, but having same number of"
-        "total data elements. The vnni factor are typically calculated as "
-        "simd_lane_width/elementTypeBitWidth. For element type having "
-        "more than 32 bits, vnni shouldn't be used.\n");
+    return emitOpError("Unexpected result shape") 
+              << "(Expected shape: " << makeString(tdescShape) 
+              << ", Given shape: " << makeString(valueShape) << ").\n";
 
   return success();
 }
@@ -358,18 +382,23 @@ LogicalResult LoadGatherOp::verify() {
 //===----------------------------------------------------------------------===//
 LogicalResult StoreScatterOp::verify() {
   auto tdescTy = getTensorDescType();
-  auto valueTy = getValueType();
-  auto maskTy = getMaskType();
-
   if (!tdescTy.getScattered())
     return emitOpError("Expects a scattered TensorDesc.\n");
 
-  std::vector<int64_t> maskShape = getShapeOf(maskTy);
-  std::vector<int64_t> valueShape = getShapeOf(valueTy);
-  std::vector<int64_t> tdescShape = tdescTy.getShape().vec();
+  if (!isWriteHintOrNone(getL1HintAttr()))
+    return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
-  if (tdescShape != valueShape || tdescShape != valueShape)
-    return emitOpError("Shape among TensorDesc, Value, and Mask don't match.\n");
+  if (!isWriteHintOrNone(getL2HintAttr()))
+    return emitOpError("invlid l2_hint: ") << getL2HintAttr();
+
+  if (!isWriteHintOrNone(getL3HintAttr()))
+    return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
+  auto maskTy = getMaskType();
+  std::vector<int64_t> maskShape = getShapeOf(maskTy);
+  std::vector<int64_t> tdescShape = getShapeOf(tdescTy);
+  if (tdescShape[0] != maskShape[0])
+    return emitOpError("dim-0 of the Mask and TensorDesc should be the same.");
 
   return success();
 }

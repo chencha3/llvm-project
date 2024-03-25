@@ -140,7 +140,7 @@ def XeGPU_TensorDesc: XeGPUTypeDef<"TensorDesc", "tensor_desc",
 
     bool getScattered() {
       auto attr = getEncodingAsTensorDescAttr();
-      if (attr)
+      if (attr && attr.getScattered())
         return attr.getScattered().getValue();
       // return default value
       return false;

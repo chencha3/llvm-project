@@ -244,7 +244,7 @@ def XeGPU_PrefetchNdOp : XeGPU_Op<"prefetch_nd", []> {
 }
 
 
-def XeGPU_LoadNdOp : XeGPU_Op<"load_nd"> {
+def XeGPU_LoadNdOp : XeGPU_Op<"load_nd", [AllElementTypesMatch<["value", "TensorDesc"]>]> {
   let summary = "loads a n-D block from memory (represented by TensorDesc)" 
                 "to registers (represented by vector)";
   let description = [{
@@ -295,7 +295,8 @@ def XeGPU_LoadNdOp : XeGPU_Op<"load_nd"> {
   let hasVerifier = 1;
 }
 
-def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", []> {
+def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", [AllShapesMatch<["value", "TensorDesc"]>, 
+                                       AllElementTypesMatch<["value", "TensorDesc"]>]> {
   let summary = "stores a n-D block register region back to memory, currently only supports 2D";
 
   let description = [{
@@ -337,6 +338,55 @@ def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", []> {
   let hasVerifier = 1;
 }
 
+def XeGPU_UpdateNdOffsetOp : XeGPU_Op<"update_nd_offset", 
+                [AllTypesMatch<["TensorDesc", "result"]>]> {
+  let summary = "It updates the offsets for the TensorDesc.";
+  let description = [{The op updates the offset of the given TensorDesc. 
+    The offsets are relative offset to the current position in the number
+    of elements. It will result in a same type TensorDesc as the input. 
+  
+  example:
+  ```
+    %2 = xegpu.update_nd_offset %1, [0, 16]: !xegpu.tensor_desc<8x16xf32>
+  ```
+  }];
+
+  let arguments = (ins
+    XeGPU_TensorDesc: $TensorDesc,
+    Variadic<Index>: $offsets,
+    DenseI64ArrayAttr: $const_offsets);
+
+  let results = (outs XeGPU_TensorDesc: $result);
+
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+
+    SmallVector<OpFoldResult> getMixedOffsets() {
+      Builder b(getContext());
+      return getMixedValues(getConstOffsets(), getOffsets(), b);
+    }
+
+    size_t getNumOffsets() {
+      return getMixedOffsets().size();
+    }
+
+    OpFoldResult getOffset(unsigned idx) {
+      assert(idx < getNumOffsets() && "Invalid out of bound access.");
+      return getMixedOffsets()[idx];
+    }
+  }];
+
+  let assemblyFormat = [{
+    $TensorDesc `,`
+    custom<DynamicIndexList>($offsets, $const_offsets)
+    attr-dict `:` qualified(type($result))
+  }];
+
+  let hasVerifier = 1;
+}
+
 def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
   let summary = "create scattered tensor descriptors (TensorDesc).";
   let description = [{
@@ -346,7 +396,7 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
     (scattered) subviews, allowing each work-item in a subgroup specifying their own offset. 
     It accepts the following parameters:
 
-    * source: a 1D memref or pointer (uint64_t) represents the memory object.
+    * source: a 1D memref or pointer (uint64_t) represents the flattened memory object.
     * offsets: a array containing offsets of each access point. Its size 
       is fixed to the hardware supportted subgroup size, e.g., 16 on PVC, 
       implying each element in the array corresponds to a work-item (SIMT lane) 
@@ -402,7 +452,6 @@ def XeGPU_CreateDescOp: XeGPU_Op<"create_tdesc", [Pure, ViewLikeOpInterface]> {
       assert(idx < getNumOffsets() && "Invalid out of bound access.");
       return getMixedOffsets()[idx];
     }
-
   }];
 
   let hasVerifier = 1;
@@ -415,7 +464,7 @@ def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
     It issues instructions to prefetch a set of scattered data points 
     from memory to each level of the cache based on their cache policy.
     As compared to prefetch_nd, which works on non-scattered TensorDesc, 
-    it works on scattered TensorDesc.
+    it works on scattered TensorDesc instead.
 
     Example:
     ```
@@ -443,10 +492,19 @@ def XeGPU_PrefetchOp : XeGPU_Op<"prefetch", []> {
   let hasVerifier = 1;
 }
 
-def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
+def XeGPU_LoadGatherOp : XeGPU_Op<"load", [AllRanksMatch<["value", "TensorDesc"]>, 
+                                    AllElementTypesMatch<["value", "TensorDesc"]>,
+                                   AllElementCountsMatch<["value", "TensorDesc"]>]> {
   let summary = "load a set of scattered data points from memory.";
 
-  let description = [{
+  let description = [{ It (aka. load) load data per each work-item. The output 
+    describes the data being loaded at the subgroup level, so its size is 
+    consistent with the number of work-items in a subgroup. When `chunk_size_per_lane` 
+    attribute is larger than 1 in TensorDesc, the output vector will be 2D vector, 
+    with dim-1 correspoding to the chunk size. 
+
+    The mask operand masks out memory access so that it is safe to pass out-of-boundary 
+    addresses/offsets as long as they are masked. It applies to slots of SIMD lanes.
 
   Example:
   ```  
@@ -462,7 +520,6 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
 
   let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
                        XeGPU_MaskType: $mask,
-                       OptionalAttr<I64Attr>: $vnni_axis,
                        OptionalAttr<DenseI64ArrayAttr>: $transpose,
                        OptionalAttr<XeGPU_CacheHintAttr>: $l1_hint,
                        OptionalAttr<XeGPU_CacheHintAttr>: $l2_hint,
@@ -476,10 +533,17 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
 
     mlir::Type getElementType() {
       auto type = getValue().getType();
-      if (auto vecTy = llvm::dyn_cast<VectorType>(type))
-        return vecTy.getElementType();
-      return type;
+      return getElementTypeOrSelf(type);
     }
+
+    Type getValueType() {
+      return getValue().getType();
+    }
+
+    Type getMaskType() {
+      return getMask().getType();
+    }
+
   }];
 
   let assemblyFormat = [{$TensorDesc `,` $mask prop-dict attr-dict 
@@ -488,9 +552,11 @@ def XeGPU_LoadGatherOp : XeGPU_Op<"load"> {
   let hasVerifier = 1;
 }
 
-def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
-  let summary = "store a scalar to source[offset].";
-  let description = [{
+def XeGPU_StoreScatterOp : XeGPU_Op<"store", [AllShapesMatch<["value", "TensorDesc"]>, 
+                                        AllElementTypesMatch<["value", "TensorDesc"]>]> {
+  let summary = "store data to scattered memory locations.";
+  let description = [{ It (aka. store) stores data to scattered memory locations.
+  It has similar semantic to `load_gather`. 
 
   Example:
   ```  
@@ -527,6 +593,57 @@ def XeGPU_StoreScatterOp : XeGPU_Op<"store", []> {
             `:` type($value) `,` qualified(type($TensorDesc)) `,` type($mask)}];
 
   let hasVerifier = 1;
+}
+
+def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset", 
+          [AllTypesMatch<["TensorDesc", "result"]>]> {
+  let summary = "It updates the offsets for the given tensor descriptor";
+
+  let description = [{It behaves similar to `update_nd_offset` in terms that 
+    it updates offset of a TensorDesc, and the offsets are relative offset to 
+    the current position in the number of elements. However, `update_nd_offset` 
+    is to update the start point of a 2D block, so its offset constains two 
+    elements representing the shift in each dimension. `update_offset` is to 
+    update the offset per work-item, so its offsets contains values representing 
+    shifts for each work-item. 
+
+    Example:
+    ```
+      %2 = xegpu.update_offset %1, [32, 32, 32, 32] 
+            : !xegpu.tensor_desc<4x2xf32, #xegpu.tdesc_attr<scattered = true>>
+    ```
+  }];
+
+  let arguments = (ins XeGPU_TensorDesc: $TensorDesc,
+                       Variadic<Index>: $offsets,
+                       DenseI64ArrayAttr: $const_offsets);
+  let results = (outs XeGPU_TensorDesc: $result);
+
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    xegpu::TensorDescType getTensorDescType() {
+      return getTensorDesc().getType();
+    }
+
+    SmallVector<OpFoldResult> getMixedOffsets() {
+      Builder b(getContext());
+      return getMixedValues(getConstOffsets(), getOffsets(), b);
+    }
+
+    size_t getNumOffsets() {
+      return getMixedOffsets().size();
+    }
+
+    OpFoldResult getOffset(unsigned idx) {
+      assert(idx < getNumOffsets() && "Invalid out of bound access.");
+      return getMixedOffsets()[idx];
+    }
+  }];
+
+  let assemblyFormat = [{
+    $TensorDesc `,`
+    custom<DynamicIndexList>($offsets, $const_offsets)
+    attr-dict `:` qualified(type($TensorDesc))
+  }];  
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
