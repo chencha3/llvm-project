@@ -296,7 +296,7 @@ LogicalResult CreateDescOp::verify() {
   if (!tdescTy.getScattered())
     return emitOpError("Expects a scattered TensorDesc.\n");
 
-  std::vector<int64_t> shape({getNumOffsets()});
+  std::vector<int64_t> shape({(int64_t)getNumOffsets()});
   if (chunkSize != 1)
     shape.push_back(chunkSize);
 
