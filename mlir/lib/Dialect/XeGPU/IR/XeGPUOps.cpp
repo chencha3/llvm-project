@@ -50,7 +50,7 @@ static std::vector<int64_t> getShapeOf(Type type) {
   return shape;
 }
 
-static int64_t getRankOf(Value val){
+static int64_t getRankOf(Value val) {
   auto type = val.getType();
   if (auto ty = llvm::dyn_cast<ShapedType>(type))
     return ty.getRank();
@@ -61,20 +61,16 @@ static bool isReadHintOrNone(const CachePolicyAttr &attr) {
   if (!attr)
     return true;
   auto kind = attr.getValue();
-  return kind == CachePolicy::CACHED || 
-         kind == CachePolicy::UNCACHED ||
-         kind == CachePolicy::STREAMING || 
-         kind == CachePolicy::READ_INVALIDATE;
+  return kind == CachePolicy::CACHED || kind == CachePolicy::UNCACHED ||
+         kind == CachePolicy::STREAMING || kind == CachePolicy::READ_INVALIDATE;
 }
 
 static bool isWriteHintOrNone(const CachePolicyAttr &attr) {
   if (!attr)
     return true;
   auto kind = attr.getValue();
-  return kind == CachePolicy::CACHED || 
-         kind == CachePolicy::UNCACHED ||
-         kind == CachePolicy::WRITE_BACK|| 
-         kind == CachePolicy::WRITE_THROUGH;
+  return kind == CachePolicy::CACHED || kind == CachePolicy::UNCACHED ||
+         kind == CachePolicy::WRITE_BACK || kind == CachePolicy::WRITE_THROUGH;
 }
 
 //===----------------------------------------------------------------------===//
@@ -194,7 +190,7 @@ LogicalResult LoadNdOp::verify() {
 
   if (!valueTy)
     return emitOpError("Invalid result, it should be a VectorType.\n");
-  
+
   if (!isReadHintOrNone(getL1HintAttr()))
     return emitOpError("invlid l1_hint: ") << getL1HintAttr();
 
@@ -240,8 +236,8 @@ LogicalResult LoadNdOp::verify() {
 // XeGPU_StoreNdOp
 //===----------------------------------------------------------------------===//
 LogicalResult StoreNdOp::verify() {
-  auto dstTy = getTensorDescType();               // Tile
-  auto valTy = getValueType();                    // Vector
+  auto dstTy = getTensorDescType(); // Tile
+  auto valTy = getValueType();      // Vector
 
   if (dstTy.getRank() != 2)
     return emitOpError("Expecting a 2D TensorDesc.\n");
@@ -279,12 +275,14 @@ LogicalResult UpdateNdOffsetOp::verify() {
 // XeGPU_CreateDescOp
 //===----------------------------------------------------------------------===//
 void CreateDescOp::build(OpBuilder &builder, OperationState &state,
-                         TensorDescType TensorDesc, Value source, 
-                         llvm::ArrayRef<OpFoldResult> offsets, uint32_t chunk_size) {
+                         TensorDescType TensorDesc, Value source,
+                         llvm::ArrayRef<OpFoldResult> offsets,
+                         uint32_t chunk_size) {
   llvm::SmallVector<int64_t> staticOffsets;
   llvm::SmallVector<Value> dynamicOffsets;
   dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
-  build(builder, state, TensorDesc, source, dynamicOffsets, staticOffsets, chunk_size);
+  build(builder, state, TensorDesc, source, dynamicOffsets, staticOffsets,
+        chunk_size);
 }
 
 LogicalResult CreateDescOp::verify() {
@@ -292,7 +290,8 @@ LogicalResult CreateDescOp::verify() {
   auto chunkSize = getChunkSize();
 
   if (getRankOf(getSource()) > 2)
-    return emitOpError("Expecting the source is a 1D memref or pointer (uint64_t).");
+    return emitOpError(
+        "Expecting the source is a 1D memref or pointer (uint64_t).");
 
   if (!tdescTy.getScattered())
     return emitOpError("Expects a scattered TensorDesc.\n");
@@ -365,14 +364,14 @@ LogicalResult LoadGatherOp::verify() {
     auto trans = getTranspose().value();
     if (tdescShape.size() < trans.size())
       emitWarning("Invalid transpose attr. It is ignored.");
-    else 
+    else
       transpose(trans, tdescShape);
   }
 
   if (valueShape != tdescShape)
-    return emitOpError("Unexpected result shape") 
-              << "(Expected shape: " << makeString(tdescShape) 
-              << ", Given shape: " << makeString(valueShape) << ").\n";
+    return emitOpError("Unexpected result shape")
+           << "(Expected shape: " << makeString(tdescShape)
+           << ", Given shape: " << makeString(valueShape) << ").\n";
 
   return success();
 }
