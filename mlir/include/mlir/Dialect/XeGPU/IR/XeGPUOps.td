@@ -244,7 +244,9 @@ def XeGPU_PrefetchNdOp : XeGPU_Op<"prefetch_nd", []> {
 }
 
 
-def XeGPU_LoadNdOp : XeGPU_Op<"load_nd", [AllElementTypesMatch<["value", "TensorDesc"]>]> {
+def XeGPU_LoadNdOp : XeGPU_Op<"load_nd", [AllRanksMatch<["value", "TensorDesc"]>,
+                                   AllElementTypesMatch<["value", "TensorDesc"]>,
+                                  AllElementCountsMatch<["value", "TensorDesc"]>]> {
   let summary = "loads a n-D block from memory (represented by TensorDesc)"
                 "to registers (represented by vector)";
   let description = [{
