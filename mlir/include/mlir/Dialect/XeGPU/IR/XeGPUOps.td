@@ -9,7 +9,6 @@
 #ifndef MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
 #define MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
 
-include "mlir/IR/AttrTypeBase.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUAttrs.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUTypes.td"
@@ -660,6 +659,63 @@ def XeGPU_UpdateOffsetOp: XeGPU_Op<"update_offset",
     custom<DynamicIndexList>($offsets, $const_offsets)
     attr-dict `:` qualified(type($TensorDesc))
   }];
+}
+
+def XeGPU_DpasOp : XeGPU_Op<"dpas", [Pure, AllElementTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "It performs mma computation";
+
+  let description = [{DPAS is a instruction from Intel GPUs for performing
+    matrix multiplication and accumulation computation (D = A x B + C), where
+    A is a `mxk` matrix and B is a `kxn` matrix. Typically `m=8`, `n=16` and
+    `k=8 * 32/bit_width_of_elem_type`. So for fp16, the matrix it supports are
+    `A: vector<8x16xf16>`, `B: vector<16x16xf16>`.  A and B are supposed to be
+    loaded with the `load_nd` operator, such that the data layout in register can
+    meet the dpas semantic. Specially, VNNI transform are required for B operand.
+    It is achieved via setting `vnni_axis = 0` of the correspoding `load_nd`
+    operator. To keep it consistent, a fake vnni transform is also introduced for
+    A operand via setting `vnni_axis = 1` of the correspoding `load_nd` operator.
+    Due to the VNNI transform, A and B operands are represented as 3D vector, with
+    the last dimension representing the vnni factor, which is computed as
+    `32/bit_width_of_elem_type`. Therefore, `A: vector<8x16xf16>` is represented
+    as `A: vector<4x8x2xf16>`, and `B:vector<16x16xf16>` is represented as
+    `B: vector<8x16x2xf16>`.
+
+    Note: VNNI transform is a transformation performed by hardware during the
+    load when data element data type is 16-bit or less.
+
+  }];
+
+  let arguments = (ins
+    XeGPU_DpasOpType : $lhs,
+    XeGPU_DpasOpType : $rhs,
+    Optional<XeGPU_Vector2DType>: $acc);
+  let results = (outs XeGPU_Vector2DType: $result);
+
+  let extraClassDeclaration = [{
+    VectorType getLhsType() {
+      return getLhs().getType();
+    }
+
+    VectorType getRhsType() {
+      return getRhs().getType();
+    }
+
+    VectorType getAccType() {
+      if (getAcc())
+        return getAcc().getType();
+      return {};
+    }
+
+    VectorType getResultType() {
+      return getResult().getType();
+    }
+  }];
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs (`,` $acc^)? attr-dict `:` type($lhs)`,` type($rhs) (`,` type($acc)^)?  `->` type($result)
+  }];
+
+  let hasVerifier = 1;
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
