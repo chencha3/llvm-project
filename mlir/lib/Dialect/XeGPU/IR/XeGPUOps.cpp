@@ -423,8 +423,8 @@ LogicalResult DpasOp::verify() {
 
   auto lhsShape = getLhsType().getShape();
   auto rhsShape = getRhsType().getShape();
-  if (lhsShape[1] != rhsShape[0] * rhsShape[2])
-    return emitOpError("K-dimension mismatch.");
+  if (lhsShape[1] != rhsShape[0] || lhsShape[2] != rhsShape[2])
+    return emitOpError("K-dimension or vnni-factor mismatch.");
 
   return success();
 }

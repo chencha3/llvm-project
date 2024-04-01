@@ -9,6 +9,7 @@
 #ifndef MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
 #define MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
 
+include "mlir/Dialect/Arith/IR/ArithBase.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUAttrs.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUDialect.td"
 include "mlir/Dialect/XeGPU/IR/XeGPUTypes.td"
@@ -716,6 +717,33 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas", [Pure, AllElementTypesMatch<["lhs", "rhs"]>]
   }];
 
   let hasVerifier = 1;
+}
+
+def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", [Pure,
+      AllElementTypesMatch<["tensorDesc", "value", "result"]>,
+      AllShapesMatch<["tensorDesc", "mask", "value", "result"]>]> {
+  let summary = "A ready-modify-write operation. ";
+
+  let description = [{
+    `AtomicRMWOp` has same semantic to `memref.atomic_rmw`, except that
+    it work on a `TensorDescType` object while `memref.atomic_rmw` works
+    on a `MemRefType` object. It also has a `mask` variable, which has the
+    same shape with `TensorDesc`, to enable or disable some data points of
+    the `TensorDesc`.
+  }];
+
+  let arguments = (ins
+    AtomicRMWKindAttr:$kind,
+    XeGPU_TensorDesc:$tensorDesc,
+    XeGPU_MaskType:$mask,
+    XeGPU_ValueType:$value);
+
+  let results = (outs XeGPU_ValueType:$result);
+
+  let assemblyFormat = [{
+    $kind $tensorDesc `,` $mask `,` $value attr-dict `:`
+    type($tensorDesc) `,` type($mask) `,` type($value) `->` type($result)
+  }];
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD
