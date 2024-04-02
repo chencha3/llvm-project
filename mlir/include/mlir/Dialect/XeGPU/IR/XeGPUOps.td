@@ -35,7 +35,7 @@ class XeGPU_Op<string mnemonic, list<Trait> traits = []>:
 
     static ::mlir::ParseResult parseProperties(::mlir::OpAsmParser &parser,
                                      ::mlir::OperationState &result) {
-      if (mlir::succeeded(parser.parseLess())) {
+      if (mlir::succeeded(parser.parseOptionalLess())) {
         if (parser.parseAttribute(result.propertiesAttr) || parser.parseGreater())
           return failure();
       }
@@ -810,6 +810,7 @@ def XeGPU_MfenceOp: XeGPU_Op<"mfence", []> {
                        StrAttr: $fence_op,
                        StrAttr: $fence_scope);
   let assemblyFormat = [{ prop-dict attr-dict }];
+  let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD

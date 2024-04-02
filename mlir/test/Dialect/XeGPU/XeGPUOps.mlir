@@ -169,4 +169,10 @@ gpu.func @nbarrier_wait(%nbarrier : !xegpu.nbarrier) {
   gpu.return
 }
 
+// CHECK-LABEL: gpu.func @mfence({{.*}}) {
+gpu.func @mfence() {
+  //CHECK: xegpu.mfence <{fence_op = "none", fence_scope = "local", memory_kind = "ugm"}>
+  xegpu.mfence <{memory_kind = "ugm" , fence_op = "none", fence_scope = "local"}>
+  gpu.return
+}
 }
