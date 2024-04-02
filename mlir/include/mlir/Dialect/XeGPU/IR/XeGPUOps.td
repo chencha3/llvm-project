@@ -669,21 +669,20 @@ def XeGPU_DpasOp : XeGPU_Op<"dpas", [Pure, AllElementTypesMatch<["lhs", "rhs"]>]
     matrix multiplication and accumulation computation (D = A x B + C), where
     A is a `mxk` matrix and B is a `kxn` matrix. Typically `m=8`, `n=16` and
     `k=8 * 32/bit_width_of_elem_type`. So for fp16, the matrix it supports are
-    `A: vector<8x16xf16>`, `B: vector<16x16xf16>`.  A and B are supposed to be
-    loaded with the `load_nd` operator, such that the data layout in register can
-    meet the dpas semantic. Specially, VNNI transform are required for B operand.
-    It is achieved via setting `vnni_axis = 0` of the correspoding `load_nd`
-    operator. To keep it consistent, a fake vnni transform is also introduced for
-    A operand via setting `vnni_axis = 1` of the correspoding `load_nd` operator.
-    Due to the VNNI transform, A and B operands are represented as 3D vector, with
-    the last dimension representing the vnni factor, which is computed as
-    `32/bit_width_of_elem_type`. Therefore, `A: vector<8x16xf16>` is represented
-    as `A: vector<4x8x2xf16>`, and `B:vector<16x16xf16>` is represented as
-    `B: vector<8x16x2xf16>`.
+    `A: vector<8x16xf16>`, `B: vector<16x16xf16>`. A and B are supposed to be
+    loaded with the `load_nd` operator, such that the data layout in register
+    can meet the dpas semantic. Specially, VNNI transform are required for B
+    operand. It is achieved via setting `vnni_axis = 0` of the correspoding
+    `load_nd` operator. To keep it consistent, a fake vnni transform is also
+    introduced for A operand via setting `vnni_axis = 1` of the correspoding
+    `load_nd` operator. Due to the VNNI transform, A and B operands are represented
+    as 3D vector, with the last dimension representing the vnni factor, which
+    is computed as `32/bit_width_of_elem_type`. Therefore, `A: vector<8x16xf16>`
+    is represented as `A: vector<4x8x2xf16>`, and `B:vector<16x16xf16>` is
+    represented as `B: vector<8x16x2xf16>`.
 
     Note: VNNI transform is a transformation performed by hardware during the
     load when data element data type is 16-bit or less.
-
   }];
 
   let arguments = (ins
@@ -744,6 +743,73 @@ def XeGPU_AtomicRMWOp: XeGPU_Op<"atomic_rmw", [Pure,
     $kind $tensorDesc `,` $mask `,` $value attr-dict `:`
     type($tensorDesc) `,` type($mask) `,` type($value) `->` type($result)
   }];
+}
+
+def XeGPU_AllocNbarrierOp: XeGPU_Op<"alloc_nbarrier", []> {
+  let summary = "It allocates a set of named barriers.";
+  let description = [{AllocNbarrier is to create a set of named barriers
+    as specified by `count`. Named barriers are workgroup level resources,
+    and are shared by all threads in the workgroup. There are up to 32
+    barriers (range 0-31) for each workgroup. A typical use case is that
+    a workgroup is partitioned into N subgroups of threads (N <= 32), and
+    each subgroup coordinating their work with a separate barrier with id
+    range from 0 to N respectively.}];
+  let arguments = (ins I64Attr: $nbarrierCount);
+  let assemblyFormat = "$nbarrierCount attr-dict";
+}
+
+def XeGPU_InitNbarrierOp: XeGPU_Op<"init_nbarrier", []> {
+  let summary = "It assigns a named barrier to the current thread.";
+  let description = [{InitNbarrierOp assigns the named barrier with the specified
+      barrier ID (0~31) to the current thread. Multiple threads may bind to the
+      same named barrier, and the `threads_count` specifies the total number of
+      threads associated with the nbarrier. It returns an object of NbarrierType
+      representing the barrier}];
+
+  let arguments = (ins I8: $nbarrier_id,
+                       I8: $threads_count);
+  let results = (outs XeGPU_Nbarrier: $result);
+  let assemblyFormat = [{
+    $nbarrier_id `,` $threads_count attr-dict `:`
+    type($nbarrier_id) `,` type($threads_count) `->` qualified(type($result))
+  }];
+}
+
+def XeGPU_NbarrierArriveOp: XeGPU_Op<"nbarrier_arrive", []> {
+  let summary = "It signals the arrival at the named barrier.";
+  let description = [{NbarrierArriveOp signals the hardware (or other threads)
+    that the current thread has produced its data for the consumer threads. When
+    the hardware signalled by `threads_count` threads for the named barrier,
+    it will notify the consumers of the named barrier to continue their work.}];
+
+  let arguments = (ins XeGPU_Nbarrier: $nbarrier);
+  let assemblyFormat = [{ $nbarrier attr-dict `:` qualified(type($nbarrier))}];
+}
+
+def XeGPU_NbarrierWaitOp: XeGPU_Op<"nbarrier_wait", []> {
+  let summary = "It waits for a named barrier.";
+  let description = [{NbarrierWaitOp signals the hardware which named barrier
+    the current thread is waiting for, such that it can get notified when the
+    named barrier is completed.}];
+  let arguments = (ins XeGPU_Nbarrier: $nbarrier);
+  let assemblyFormat = [{ $nbarrier attr-dict `:` qualified(type($nbarrier)) }];
+}
+
+def XeGPU_MfenceOp: XeGPU_Op<"mfence", []> {
+  let summary = "It synchronizes the memory accesses.\n";
+  let description = [{It synchronizes the memory access between
+    write and following read or write.
+    1. `Memory_kind` describes the memory kind. "ugm" means the global memory,
+        "slm" means the share local memory.
+    2. `Fence_op` describes the operations associated with the fence.
+        It is reserved for future architecture, and the current value is limited to "none".
+    3. `Fence_scope` describes the scope of fence. "local" means that the scope would be
+        within each XeCore. "tile" means the scope would be across XeCore with one tile.
+  }];
+  let arguments = (ins StrAttr: $memory_kind,
+                       StrAttr: $fence_op,
+                       StrAttr: $fence_scope);
+  let assemblyFormat = [{ prop-dict attr-dict }];
 }
 
 #endif // MLIR_DIALECT_XEGPU_IR_XEGPUOPS_TD

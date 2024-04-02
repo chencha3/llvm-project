@@ -137,4 +137,36 @@ gpu.func @test_atomic_rmw(%src: ui64, %value : vector<16xf32>, %mask : vector<16
   gpu.return
 }
 
+// CHECK: gpu.func @alloc_nbarrier({{.*}}) {
+gpu.func @alloc_nbarrier() {
+  // CHECK: xegpu.alloc_nbarrier
+  xegpu.alloc_nbarrier 8
+  gpu.return
+}
+
+// CHECK: gpu.func @init_nbarrier({{.*}}) {
+gpu.func @init_nbarrier() {
+  //CHECK: %[[c1:.*]] = arith.constant 1 : i8
+  //CHECK: %[[c16:.*]] = arith.constant 16 : i8
+  %nbarrier_id = arith.constant 1 : i8
+  %threads_count = arith.constant 16 : i8
+  //CHECK: xegpu.init_nbarrier %[[c1]], %[[c16]] : i8, i8 -> !xegpu.nbarrier
+  %nbarrier = xegpu.init_nbarrier %nbarrier_id, %threads_count : i8, i8 -> !xegpu.nbarrier
+  gpu.return
+}
+
+// CHECK: gpu.func @nbarrier_arrive(%[[arg0:.*]]: !xegpu.nbarrier) {
+gpu.func @nbarrier_arrive(%nbarrier : !xegpu.nbarrier) {
+  //CHECK: xegpu.nbarrier_arrive %[[arg0]] : !xegpu.nbarrier
+  xegpu.nbarrier_arrive %nbarrier : !xegpu.nbarrier
+  gpu.return
+}
+
+// CHECK: gpu.func @nbarrier_wait(%[[arg0:.*]]: !xegpu.nbarrier) {
+gpu.func @nbarrier_wait(%nbarrier : !xegpu.nbarrier) {
+  //CHECK: xegpu.nbarrier_wait %[[arg0]] : !xegpu.nbarrier
+  xegpu.nbarrier_wait %nbarrier : !xegpu.nbarrier
+  gpu.return
+}
+
 }
