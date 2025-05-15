@@ -631,6 +631,155 @@ private:
   vector::UnrollVectorOptions options;
 };
 
+struct UnrollLoadPattern : public OpRewritePattern<vector::LoadOp> {
+  UnrollLoadPattern(MLIRContext *context,
+                    const vector::UnrollVectorOptions &options,
+                    PatternBenefit benefit = 1)
+      : OpRewritePattern<vector::LoadOp>(context, benefit), options(options) {}
+
+  LogicalResult matchAndRewrite(vector::LoadOp loadOp,
+                                PatternRewriter &rewriter) const override {
+    VectorType vecType = loadOp.getVectorType();
+    if (vecType.getRank() <= 1)
+      return failure(); // Only unroll >1D loads.
+
+    // Target shape is 1D vector of the innermost dimension.
+    SmallVector<int64_t> targetShape = {vecType.getShape().back()};
+    VectorType sliceType = VectorType::get(targetShape, vecType.getElementType());
+
+    Location loc = loadOp.getLoc();
+    ArrayRef<int64_t> shape = vecType.getShape();
+    int64_t outerDim = 1;
+    for (size_t i = 0; i < shape.size() - 1; ++i)
+      outerDim *= shape[i];
+
+    // Prepare the result vector.
+    Value result = rewriter.create<arith::ConstantOp>(
+        loc, vecType, rewriter.getZeroAttr(vecType));
+
+    // Compute the strides for each dimension.
+    SmallVector<int64_t> dimStrides(shape.size(), 1);
+    for (int i = shape.size() - 2; i >= 0; --i)
+      dimStrides[i] = dimStrides[i + 1] * shape[i + 1];
+
+    // Iterate over all outer elements.
+    for (int64_t idx = 0; idx < outerDim; ++idx) {
+      // Compute multi-dimensional indices for the outer dimensions.
+      SmallVector<int64_t> multiIdx(shape.size() - 1, 0);
+      int64_t rem = idx;
+      for (size_t d = 0; d < shape.size() - 1; ++d) {
+        multiIdx[d] = rem / dimStrides[d + 1];
+        rem = rem % dimStrides[d + 1];
+      }
+
+      // Compute indices for this slice.
+      SmallVector<Value> indices(loadOp.getIndices().begin(), loadOp.getIndices().end());
+      for (size_t d = 0; d < multiIdx.size(); ++d) {
+        if (multiIdx[d] != 0) {
+          indices[d] = rewriter.create<arith::AddIOp>(
+              loc, indices[d],
+              rewriter.create<arith::ConstantIndexOp>(loc, multiIdx[d]));
+        }
+      }
+
+      // Load the 1D slice.
+      Value slice = rewriter.create<vector::LoadOp>(loc, sliceType, loadOp.getBase(), indices);
+
+      // Insert the slice into the result at the correct position.
+      SmallVector<int64_t> insertOffsets(multiIdx);
+      insertOffsets.push_back(0);
+      SmallVector<int64_t> strides(targetShape.size(), 1);
+      result = rewriter.createOrFold<vector::InsertStridedSliceOp>(
+          loc, slice, result, insertOffsets, strides);
+    }
+
+    rewriter.replaceOp(loadOp, result);
+    return success();
+  }
+
+private:
+  vector::UnrollVectorOptions options;
+};
+
+/// This pattern converts the StoreOp to a series of StoreOp & ExtractOp
+/// that works on a linearized vector.
+/// Following,
+///   vector.store %source, %base[%indices] : vector<4x4xf32>
+/// is converted to :
+///   %slice_0 = vector.extract %source[0] : vector<4xf32>
+///   vector.store %slice_0, %base[%indices] : vector<4xf32>
+///   %slice_1 = vector.extract %source[1] : vector<4xf32>
+///   vector.store %slice_1, %base[%indices + 1] : vector<4xf32>
+///   ...
+/// This unrolls the vector store into multiple 1D vector stores by
+/// extracting slices from the source vector and storing them into the
+/// destination.
+struct UnrollStorePattern : public OpRewritePattern<vector::StoreOp> {
+  UnrollStorePattern(MLIRContext *context,
+                     const vector::UnrollVectorOptions &options,
+                     PatternBenefit benefit = 1)
+      : OpRewritePattern<vector::StoreOp>(context, benefit), options(options) {}
+
+  LogicalResult matchAndRewrite(vector::StoreOp storeOp,
+                                PatternRewriter &rewriter) const override {
+    VectorType vecType = storeOp.getVectorType();
+    if (vecType.getRank() <= 1)
+      return failure(); // Only unroll >1D stores.
+
+    // Target shape is 1D vector of the innermost dimension.
+    SmallVector<int64_t> targetShape = {vecType.getShape().back()};
+    VectorType sliceType = VectorType::get(targetShape, vecType.getElementType());
+
+    Location loc = storeOp.getLoc();
+    ArrayRef<int64_t> shape = vecType.getShape();
+    int64_t outerDim = 1;
+    for (size_t i = 0; i < shape.size() - 1; ++i)
+      outerDim *= shape[i];
+
+    // Compute the strides for each dimension.
+    SmallVector<int64_t> dimStrides(shape.size(), 1);
+    for (int i = shape.size() - 2; i >= 0; --i)
+      dimStrides[i] = dimStrides[i + 1] * shape[i + 1];
+
+    Value base = storeOp.getBase();
+    Value vector = storeOp.getValueToStore();
+
+    // Iterate over all outer elements.
+    for (int64_t idx = 0; idx < outerDim; ++idx) {
+      // Compute multi-dimensional indices for the outer dimensions.
+      SmallVector<int64_t> multiIdx(shape.size() - 1, 0);
+      int64_t rem = idx;
+      for (size_t d = 0; d < shape.size() - 1; ++d) {
+        multiIdx[d] = rem / dimStrides[d + 1];
+        rem = rem % dimStrides[d + 1];
+      }
+
+      // Compute indices for this slice.
+      SmallVector<Value> indices(storeOp.getIndices().begin(), storeOp.getIndices().end());
+      for (size_t d = 0; d < multiIdx.size(); ++d) {
+        if (multiIdx[d] != 0) {
+          indices[d] = rewriter.create<arith::AddIOp>(
+              loc, indices[d],
+              rewriter.create<arith::ConstantIndexOp>(loc, multiIdx[d]));
+        }
+      }
+
+      // Extract the 1D slice to store.
+      SmallVector<int64_t> extractPosition(multiIdx);
+      Value slice = rewriter.create<vector::ExtractOp>(
+          loc, vector, extractPosition);
+
+      // Create the store for the slice.
+      rewriter.create<vector::StoreOp>(loc, slice, base, indices);
+    }
+    rewriter.eraseOp(storeOp);
+    return success();
+  }
+
+private:
+  vector::UnrollVectorOptions options;
+};
+
 } // namespace
 
 void mlir::vector::populateVectorUnrollPatterns(
@@ -639,6 +788,6 @@ void mlir::vector::populateVectorUnrollPatterns(
   patterns.add<UnrollTransferReadPattern, UnrollTransferWritePattern,
                UnrollContractionPattern, UnrollElementwisePattern,
                UnrollReductionPattern, UnrollMultiReductionPattern,
-               UnrollTransposePattern, UnrollGatherPattern>(
-      patterns.getContext(), options, benefit);
+               UnrollTransposePattern, UnrollGatherPattern, UnrollLoadPattern,
+               UnrollStorePattern>(patterns.getContext(), options, benefit);
 }

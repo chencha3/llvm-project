@@ -174,7 +174,6 @@ struct TestVectorUnrollingPatterns
                       .setFilterConstraint([](Operation *op) {
                         return success(isa<vector::TransposeOp>(op));
                       }));
-
     if (unrollBasedOnType) {
       UnrollVectorOptions::NativeShapeFnType nativeShapeFn =
           [](Operation *op) -> std::optional<SmallVector<int64_t>> {
@@ -185,6 +184,7 @@ struct TestVectorUnrollingPatterns
         nativeShape[nativeShape.size() - 1] = lhsType.isF16() ? 4 : 2;
         return nativeShape;
       };
+
 
       UnrollVectorOptions opts;
       opts.setNativeShapeFn(nativeShapeFn)
@@ -287,6 +287,75 @@ struct TestVectorTransferUnrollingPatterns
       llvm::cl::desc(
           "reverse the order of unrolling of vector transfer operations"),
       llvm::cl::init(false)};
+};
+
+struct TestVectorLoadStoreUnrollPatterns
+  : public PassWrapper<TestVectorLoadStoreUnrollPatterns,
+             OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestVectorLoadStoreUnrollPatterns)
+
+  StringRef getArgument() const final { return "test-vector-load-store-unroll"; }
+  StringRef getDescription() const final {
+    return "Test unrolling patterns for vector.load and vector.store ops";
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<vector::VectorDialect, arith::ArithDialect>();
+  }
+
+  void runOnOperation() override {
+    MLIRContext *ctx = &getContext();
+    RewritePatternSet patterns(ctx);
+
+    // Unroll all vector.load and vector.store ops with rank > 1 to 1D vectors
+    vector::UnrollVectorOptions options;
+    options.setNativeShapeFn([](Operation *op) -> std::optional<SmallVector<int64_t>> {
+      // For vector.load ops
+      if (auto loadOp = dyn_cast<vector::LoadOp>(op)) {
+        auto vectorType = loadOp.getType();
+        if (vectorType.getRank() > 1) {
+          // For multi-dimensional vectors, compute a flattened shape
+          // with the same number of dimensions but only 1 element per dimension
+          // except the innermost dimension which gets all elements
+          SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
+          int64_t product = 1;
+          for (int64_t dim : vectorType.getShape())
+            product *= dim;
+          targetShape.back() = product;
+          return targetShape;
+        }
+      }
+      // For vector.store ops
+      else if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
+        auto vectorType = storeOp.getVectorType();
+        if (vectorType.getRank() > 1) {
+          SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
+          int64_t product = 1;
+          for (int64_t dim : vectorType.getShape())
+            product *= dim;
+          targetShape.back() = product;
+          return targetShape;
+        }
+      }
+      return std::nullopt;
+    });
+
+    options.setFilterConstraint([](Operation *op) {
+      if (auto loadOp = dyn_cast<vector::LoadOp>(op))
+        return success(loadOp.getType().getRank() > 1);
+      if (auto storeOp = dyn_cast<vector::StoreOp>(op))
+        return success(storeOp.getVectorType().getRank() > 1);
+      return failure();
+    });
+
+    vector::populateVectorUnrollPatterns(patterns, options);
+
+    // Add vector-to-vector canonicalization patterns
+    vector::populateVectorToVectorCanonicalizationPatterns(patterns);
+
+    // Apply the patterns
+     (void)applyPatternsGreedily(getOperation(), std::move(patterns));
+  }
 };
 
 struct TestScalarVectorTransferLoweringPatterns
@@ -1032,6 +1101,8 @@ void registerTestVectorLowerings() {
   PassRegistration<TestVectorUnrollingPatterns>();
 
   PassRegistration<TestVectorTransferUnrollingPatterns>();
+
+  PassRegistration<TestVectorLoadStoreUnrollPatterns>();
 
   PassRegistration<TestScalarVectorTransferLoweringPatterns>();
 
