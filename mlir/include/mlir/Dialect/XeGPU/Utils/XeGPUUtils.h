@@ -80,9 +80,6 @@ template <typename T,
                                       std::is_same_v<T, OpResult>>>
 void setLayoutAttr(const T &operandOrResult, const LayoutAttr layout);
 
-/// Flatten a set of ValueRange into a single SmallVector<Value>
-SmallVector<Value> flattenValues(ArrayRef<ValueRange> values);
-
 /// Set the LayoutAttr for each OpOperand and OpResult of the given operation.
 /// If the operation contains regions, it is also applied recursively to the
 /// contained operations
