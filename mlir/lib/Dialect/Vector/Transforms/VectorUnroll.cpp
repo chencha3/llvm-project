@@ -640,16 +640,19 @@ struct UnrollLoadPattern : public OpRewritePattern<vector::LoadOp> {
   LogicalResult matchAndRewrite(vector::LoadOp loadOp,
                                 PatternRewriter &rewriter) const override {
     VectorType vecType = loadOp.getVectorType();
+    // Only unroll >1D loads
     if (vecType.getRank() <= 1)
-      return failure(); // Only unroll >1D loads.
+      return failure(); 
 
     // Target shape is 1D vector of the innermost dimension.
     SmallVector<int64_t> targetShape = {vecType.getShape().back()};
-    VectorType sliceType = VectorType::get(targetShape, vecType.getElementType());
+    VectorType sliceType =
+        VectorType::get(targetShape, vecType.getElementType());
 
     Location loc = loadOp.getLoc();
     ArrayRef<int64_t> shape = vecType.getShape();
     int64_t outerDim = 1;
+    // Product of all outer dimensions.
     for (size_t i = 0; i < shape.size() - 1; ++i)
       outerDim *= shape[i];
 
@@ -657,37 +660,41 @@ struct UnrollLoadPattern : public OpRewritePattern<vector::LoadOp> {
     Value result = rewriter.create<arith::ConstantOp>(
         loc, vecType, rewriter.getZeroAttr(vecType));
 
-    // Compute the strides for each dimension.
-    SmallVector<int64_t> dimStrides(shape.size(), 1);
-    for (int i = shape.size() - 2; i >= 0; --i)
+    // Compute strides for outer dimensions.
+    SmallVector<int64_t> dimStrides(shape.size() - 1, 1);
+    for (int i = shape.size() - 3; i >= 0; --i)
       dimStrides[i] = dimStrides[i + 1] * shape[i + 1];
 
-    // Iterate over all outer elements.
+    // Iterate over all outer dimension combinations.
     for (int64_t idx = 0; idx < outerDim; ++idx) {
-      // Compute multi-dimensional indices for the outer dimensions.
+      // Compute multi-dimensional indices for outer dimensions.
       SmallVector<int64_t> multiIdx(shape.size() - 1, 0);
       int64_t rem = idx;
       for (size_t d = 0; d < shape.size() - 1; ++d) {
-        multiIdx[d] = rem / dimStrides[d + 1];
-        rem = rem % dimStrides[d + 1];
+        multiIdx[d] = rem / dimStrides[d];
+        rem = rem % dimStrides[d];
       }
 
-      // Compute indices for this slice.
-      SmallVector<Value> indices(loadOp.getIndices().begin(), loadOp.getIndices().end());
+      // Compute memref indices for this slice.
+      SmallVector<Value> indices(loadOp.getIndices().begin(),
+                                 loadOp.getIndices().end());
+      size_t memrefStartDim =
+          cast<MemRefType>(loadOp.getBase().getType()).getRank() -
+          vecType.getRank();
       for (size_t d = 0; d < multiIdx.size(); ++d) {
         if (multiIdx[d] != 0) {
-          indices[d] = rewriter.create<arith::AddIOp>(
-              loc, indices[d],
+          indices[memrefStartDim + d] = rewriter.create<arith::AddIOp>(
+              loc, indices[memrefStartDim + d],
               rewriter.create<arith::ConstantIndexOp>(loc, multiIdx[d]));
         }
       }
 
-      // Load the 1D slice.
-      Value slice = rewriter.create<vector::LoadOp>(loc, sliceType, loadOp.getBase(), indices);
+      Value slice = rewriter.create<vector::LoadOp>(loc, sliceType,
+                                                    loadOp.getBase(), indices);
 
       // Insert the slice into the result at the correct position.
-      SmallVector<int64_t> insertOffsets(multiIdx);
-      insertOffsets.push_back(0);
+      SmallVector<int64_t> insertOffsets = multiIdx;
+      insertOffsets.push_back(0); // Innermost dimension offset is 0.
       SmallVector<int64_t> strides(targetShape.size(), 1);
       result = rewriter.createOrFold<vector::InsertStridedSliceOp>(
           loc, slice, result, insertOffsets, strides);
@@ -701,19 +708,6 @@ private:
   vector::UnrollVectorOptions options;
 };
 
-/// This pattern converts the StoreOp to a series of StoreOp & ExtractOp
-/// that works on a linearized vector.
-/// Following,
-///   vector.store %source, %base[%indices] : vector<4x4xf32>
-/// is converted to :
-///   %slice_0 = vector.extract %source[0] : vector<4xf32>
-///   vector.store %slice_0, %base[%indices] : vector<4xf32>
-///   %slice_1 = vector.extract %source[1] : vector<4xf32>
-///   vector.store %slice_1, %base[%indices + 1] : vector<4xf32>
-///   ...
-/// This unrolls the vector store into multiple 1D vector stores by
-/// extracting slices from the source vector and storing them into the
-/// destination.
 struct UnrollStorePattern : public OpRewritePattern<vector::StoreOp> {
   UnrollStorePattern(MLIRContext *context,
                      const vector::UnrollVectorOptions &options,
@@ -723,55 +717,60 @@ struct UnrollStorePattern : public OpRewritePattern<vector::StoreOp> {
   LogicalResult matchAndRewrite(vector::StoreOp storeOp,
                                 PatternRewriter &rewriter) const override {
     VectorType vecType = storeOp.getVectorType();
+    // Only unroll >1D stores.
     if (vecType.getRank() <= 1)
-      return failure(); // Only unroll >1D stores.
+      return failure();
 
     // Target shape is 1D vector of the innermost dimension.
     SmallVector<int64_t> targetShape = {vecType.getShape().back()};
-    VectorType sliceType = VectorType::get(targetShape, vecType.getElementType());
 
     Location loc = storeOp.getLoc();
     ArrayRef<int64_t> shape = vecType.getShape();
     int64_t outerDim = 1;
+    // Product of all outer dimensions.
     for (size_t i = 0; i < shape.size() - 1; ++i)
       outerDim *= shape[i];
 
-    // Compute the strides for each dimension.
-    SmallVector<int64_t> dimStrides(shape.size(), 1);
-    for (int i = shape.size() - 2; i >= 0; --i)
+    // Compute strides for outer dimensions.
+    SmallVector<int64_t> dimStrides(shape.size() - 1, 1);
+    for (int i = shape.size() - 3; i >= 0; --i)
       dimStrides[i] = dimStrides[i + 1] * shape[i + 1];
 
     Value base = storeOp.getBase();
     Value vector = storeOp.getValueToStore();
 
-    // Iterate over all outer elements.
+    // Iterate over all outer dimension combinations.
     for (int64_t idx = 0; idx < outerDim; ++idx) {
-      // Compute multi-dimensional indices for the outer dimensions.
+      // Compute multi-dimensional indices for outer dimensions.
       SmallVector<int64_t> multiIdx(shape.size() - 1, 0);
       int64_t rem = idx;
       for (size_t d = 0; d < shape.size() - 1; ++d) {
-        multiIdx[d] = rem / dimStrides[d + 1];
-        rem = rem % dimStrides[d + 1];
+        multiIdx[d] = rem / dimStrides[d];
+        rem = rem % dimStrides[d];
       }
 
-      // Compute indices for this slice.
-      SmallVector<Value> indices(storeOp.getIndices().begin(), storeOp.getIndices().end());
+      // Compute memref indices for this slice.
+      SmallVector<Value> indices(storeOp.getIndices().begin(),
+                                 storeOp.getIndices().end());
+      size_t memrefStartDim =
+          cast<MemRefType>(storeOp.getBase().getType()).getRank() -
+          vecType.getRank();
       for (size_t d = 0; d < multiIdx.size(); ++d) {
         if (multiIdx[d] != 0) {
-          indices[d] = rewriter.create<arith::AddIOp>(
-              loc, indices[d],
+          indices[memrefStartDim + d] = rewriter.create<arith::AddIOp>(
+              loc, indices[memrefStartDim + d],
               rewriter.create<arith::ConstantIndexOp>(loc, multiIdx[d]));
         }
       }
 
-      // Extract the 1D slice to store.
-      SmallVector<int64_t> extractPosition(multiIdx);
-      Value slice = rewriter.create<vector::ExtractOp>(
-          loc, vector, extractPosition);
 
-      // Create the store for the slice.
+      SmallVector<int64_t> extractPosition = multiIdx;
+      Value slice =
+          rewriter.create<vector::ExtractOp>(loc, vector, extractPosition);
+
       rewriter.create<vector::StoreOp>(loc, slice, base, indices);
     }
+
     rewriter.eraseOp(storeOp);
     return success();
   }
