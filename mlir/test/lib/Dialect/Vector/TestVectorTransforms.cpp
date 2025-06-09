@@ -185,7 +185,6 @@ struct TestVectorUnrollingPatterns
         return nativeShape;
       };
 
-
       UnrollVectorOptions opts;
       opts.setNativeShapeFn(nativeShapeFn)
           .setFilterConstraint(
@@ -290,11 +289,14 @@ struct TestVectorTransferUnrollingPatterns
 };
 
 struct TestVectorLoadStoreUnrollPatterns
-  : public PassWrapper<TestVectorLoadStoreUnrollPatterns,
-             OperationPass<func::FuncOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestVectorLoadStoreUnrollPatterns)
+    : public PassWrapper<TestVectorLoadStoreUnrollPatterns,
+                         OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      TestVectorLoadStoreUnrollPatterns)
 
-  StringRef getArgument() const final { return "test-vector-load-store-unroll"; }
+  StringRef getArgument() const final {
+    return "test-vector-load-store-unroll";
+  }
   StringRef getDescription() const final {
     return "Test unrolling patterns for vector.load and vector.store ops";
   }
@@ -309,36 +311,38 @@ struct TestVectorLoadStoreUnrollPatterns
 
     // Unroll all vector.load and vector.store ops with rank > 1 to 1D vectors
     vector::UnrollVectorOptions options;
-    options.setNativeShapeFn([](Operation *op) -> std::optional<SmallVector<int64_t>> {
-      // For vector.load ops
-      if (auto loadOp = dyn_cast<vector::LoadOp>(op)) {
-        auto vectorType = loadOp.getType();
-        if (vectorType.getRank() > 1) {
-          // For multi-dimensional vectors, compute a flattened shape
-          // with the same number of dimensions but only 1 element per dimension
-          // except the innermost dimension which gets all elements
-          SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
-          int64_t product = 1;
-          for (int64_t dim : vectorType.getShape())
-            product *= dim;
-          targetShape.back() = product;
-          return targetShape;
-        }
-      }
-      // For vector.store ops
-      else if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
-        auto vectorType = storeOp.getVectorType();
-        if (vectorType.getRank() > 1) {
-          SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
-          int64_t product = 1;
-          for (int64_t dim : vectorType.getShape())
-            product *= dim;
-          targetShape.back() = product;
-          return targetShape;
-        }
-      }
-      return std::nullopt;
-    });
+    options.setNativeShapeFn(
+        [](Operation *op) -> std::optional<SmallVector<int64_t>> {
+          // For vector.load ops
+          if (auto loadOp = dyn_cast<vector::LoadOp>(op)) {
+            auto vectorType = loadOp.getType();
+            if (vectorType.getRank() > 1) {
+              // For multi-dimensional vectors, compute a flattened shape
+              // with the same number of dimensions but only 1 element per
+              // dimension except the innermost dimension which gets all
+              // elements
+              SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
+              int64_t product = 1;
+              for (int64_t dim : vectorType.getShape())
+                product *= dim;
+              targetShape.back() = product;
+              return targetShape;
+            }
+          }
+          // For vector.store ops
+          else if (auto storeOp = dyn_cast<vector::StoreOp>(op)) {
+            auto vectorType = storeOp.getVectorType();
+            if (vectorType.getRank() > 1) {
+              SmallVector<int64_t> targetShape(vectorType.getRank(), 1);
+              int64_t product = 1;
+              for (int64_t dim : vectorType.getShape())
+                product *= dim;
+              targetShape.back() = product;
+              return targetShape;
+            }
+          }
+          return std::nullopt;
+        });
 
     options.setFilterConstraint([](Operation *op) {
       if (auto loadOp = dyn_cast<vector::LoadOp>(op))
@@ -354,7 +358,7 @@ struct TestVectorLoadStoreUnrollPatterns
     vector::populateVectorToVectorCanonicalizationPatterns(patterns);
 
     // Apply the patterns
-     (void)applyPatternsGreedily(getOperation(), std::move(patterns));
+    (void)applyPatternsGreedily(getOperation(), std::move(patterns));
   }
 };
 

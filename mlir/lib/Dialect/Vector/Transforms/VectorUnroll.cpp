@@ -674,22 +674,26 @@ struct UnrollLoadPattern : public OpRewritePattern<vector::LoadOp> {
     ArrayRef<int64_t> originalShape = vecType.getShape();
 
     // Target type is a 1D vector of the innermost dimension.
-    auto targetType = VectorType::get(originalShape.back(), vecType.getElementType());
+    auto targetType =
+        VectorType::get(originalShape.back(), vecType.getElementType());
 
-    // Extend the targetShape to the same rank of original shape by padding 1s for leading dimensions
-    // for convenience of computing offsets
+    // Extend the targetShape to the same rank of original shape by padding 1s
+    // for leading dimensions for convenience of computing offsets
     SmallVector<int64_t> targetShape(originalShape.size(), 1);
     targetShape.back() = originalShape.back();
 
-    Value result = rewriter.create<arith::ConstantOp>(loc, vecType, rewriter.getZeroAttr(vecType));
+    Value result = rewriter.create<arith::ConstantOp>(
+        loc, vecType, rewriter.getZeroAttr(vecType));
 
     SmallVector<Value> originalIndices(loadOp.getIndices().begin(),
                                        loadOp.getIndices().end());
 
-    for (SmallVector<int64_t> offsets: StaticTileOffsetRange(originalShape, targetShape)) {
+    for (SmallVector<int64_t> offsets :
+         StaticTileOffsetRange(originalShape, targetShape)) {
       SmallVector<Value> indices =
           computeIndices(rewriter, loc, originalIndices, offsets);
-      Value slice = rewriter.create<vector::LoadOp>(loc, targetType, loadOp.getBase(), indices);
+      Value slice = rewriter.create<vector::LoadOp>(loc, targetType,
+                                                    loadOp.getBase(), indices);
       // Insert the slice into the result at the correct position.
       result = rewriter.createOrFold<vector::InsertStridedSliceOp>(
           loc, slice, result, offsets, SmallVector<int64_t>({1}));
