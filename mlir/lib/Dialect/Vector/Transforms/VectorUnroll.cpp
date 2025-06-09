@@ -641,18 +641,18 @@ static SmallVector<Value> computeIndices(PatternRewriter &rewriter,
   assert(offsets.size() <= originalIndices.size() &&
          "Offsets should not exceed the number of original indices");
   SmallVector<Value> indices(originalIndices);
-  auto original_iter = originalIndices.rbegin();
-  auto offsets_iter = offsets.rbegin();
-  auto indices_iter = indices.rbegin();
-  while (offsets_iter != offsets.rend()) {
-    Value original = *original_iter;
-    int64_t offset = *offsets_iter;
+  auto originalIter = originalIndices.rbegin();
+  auto offsetsIter = offsets.rbegin();
+  auto indicesIter = indices.rbegin();
+  while (offsetsIter != offsets.rend()) {
+    Value original = *originalIter;
+    int64_t offset = *offsetsIter;
     if (offset != 0)
-      *indices_iter = rewriter.create<arith::AddIOp>(
+      *indicesIter = rewriter.create<arith::AddIOp>(
           loc, original, rewriter.create<arith::ConstantIndexOp>(loc, offset));
-    original_iter++;
-    offsets_iter++;
-    indices_iter++;
+    originalIter++;
+    offsetsIter++;
+    indicesIter++;
   }
   return indices;
 };
