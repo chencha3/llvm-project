@@ -631,9 +631,9 @@ private:
   vector::UnrollVectorOptions options;
 };
 
-// comput the new indices by adding offsets to originalIndices.
-// It assumes m <= n (m = offsets.size(), n = originalIndices.size()),
-// Last m of originalIndices will be updated.
+// Computes updated indices by adding offsets to the original indices.
+// Assumes offsets.size() <= originalIndices.size(); updates the last
+// offsets.size() elements of originalIndices accordingly.
 static SmallVector<Value> computeIndices(PatternRewriter &rewriter,
                                          Location loc,
                                          ArrayRef<Value> originalIndices,
