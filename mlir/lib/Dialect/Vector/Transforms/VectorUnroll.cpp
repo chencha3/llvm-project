@@ -642,64 +642,53 @@ struct UnrollLoadPattern : public OpRewritePattern<vector::LoadOp> {
     VectorType vecType = loadOp.getVectorType();
     // Only unroll >1D loads
     if (vecType.getRank() <= 1)
-      return failure(); 
-
-    // Target shape is 1D vector of the innermost dimension.
-    SmallVector<int64_t> targetShape = {vecType.getShape().back()};
-    VectorType sliceType =
-        VectorType::get(targetShape, vecType.getElementType());
+      return failure();
 
     Location loc = loadOp.getLoc();
-    ArrayRef<int64_t> shape = vecType.getShape();
-    int64_t outerDim = 1;
-    // Product of all outer dimensions.
-    for (size_t i = 0; i < shape.size() - 1; ++i)
-      outerDim *= shape[i];
 
-    // Prepare the result vector.
-    Value result = rewriter.create<arith::ConstantOp>(
-        loc, vecType, rewriter.getZeroAttr(vecType));
+    ArrayRef<int64_t> originalShape = vecType.getShape();
 
-    // Compute strides for outer dimensions.
-    SmallVector<int64_t> dimStrides(shape.size() - 1, 1);
-    for (int i = shape.size() - 3; i >= 0; --i)
-      dimStrides[i] = dimStrides[i + 1] * shape[i + 1];
+    // Target type is a 1D vector of the innermost dimension.
+    auto targetType = VectorType::get(originalShape.back(), vecType.getElementType());
 
-    // Iterate over all outer dimension combinations.
-    for (int64_t idx = 0; idx < outerDim; ++idx) {
-      // Compute multi-dimensional indices for outer dimensions.
-      SmallVector<int64_t> multiIdx(shape.size() - 1, 0);
-      int64_t rem = idx;
-      for (size_t d = 0; d < shape.size() - 1; ++d) {
-        multiIdx[d] = rem / dimStrides[d];
-        rem = rem % dimStrides[d];
+    // Extend the targetShape to the same rank of original shape by padding 1s for leading dimensions
+    // for convenience of computing offsets
+    SmallVector<int64_t> targetShape(originalShape.size(), 1);
+    targetShape.back() = originalShape.back();
+
+    auto computeIndices = [&](ArrayRef<Value> originalIndices,
+                               ArrayRef<int64_t> offsets) {
+      assert(offsets.size() <= originalIndices.size() &&
+             "Offsets should not exceed the number of original indices");
+      SmallVector<Value> indices(originalIndices);
+      auto original_iter = originalIndices.rbegin();
+      auto offsets_iter = offsets.rbegin();
+      auto indices_iter = indices.rbegin();
+      while(offsets_iter != offsets.rend()) {
+        Value original = *original_iter;
+        int64_t offset = *offsets_iter;
+        if (offset != 0)
+          *indices_iter = rewriter.create<arith::AddIOp>(loc, original, rewriter.create<arith::ConstantIndexOp>(loc, offset));
+        original_iter++;
+        offsets_iter++;
+        indices_iter++;
       }
+      return indices;
+    };
 
-      // Compute memref indices for this slice.
-      SmallVector<Value> indices(loadOp.getIndices().begin(),
-                                 loadOp.getIndices().end());
-      size_t memrefStartDim =
-          cast<MemRefType>(loadOp.getBase().getType()).getRank() -
-          vecType.getRank();
-      for (size_t d = 0; d < multiIdx.size(); ++d) {
-        if (multiIdx[d] != 0) {
-          indices[memrefStartDim + d] = rewriter.create<arith::AddIOp>(
-              loc, indices[memrefStartDim + d],
-              rewriter.create<arith::ConstantIndexOp>(loc, multiIdx[d]));
-        }
-      }
+    Value result = rewriter.create<arith::ConstantOp>(loc, vecType, rewriter.getZeroAttr(vecType));
 
-      Value slice = rewriter.create<vector::LoadOp>(loc, sliceType,
-                                                    loadOp.getBase(), indices);
+    SmallVector<Value> originalIndices(loadOp.getIndices().begin(),
+                                       loadOp.getIndices().end());
 
+    for (SmallVector<int64_t> offsets: StaticTileOffsetRange(originalShape, targetShape)) {
+      SmallVector<Value> indices = computeIndices(originalIndices, offsets);
+      Value slice = rewriter.create<vector::LoadOp>(loc, targetType, loadOp.getBase(), indices);
       // Insert the slice into the result at the correct position.
-      SmallVector<int64_t> insertOffsets = multiIdx;
-      insertOffsets.push_back(0); // Innermost dimension offset is 0.
       SmallVector<int64_t> strides(targetShape.size(), 1);
       result = rewriter.createOrFold<vector::InsertStridedSliceOp>(
-          loc, slice, result, insertOffsets, strides);
+          loc, slice, result, offsets, strides);
     }
-
     rewriter.replaceOp(loadOp, result);
     return success();
   }
